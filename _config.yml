@@ -1,0 +1,5 @@
+auto: false
+server: false
+permalink: none
+destination: _asm-gp
+exclude: gcd gcd_h gcd_java data lib

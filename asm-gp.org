@@ -1,0 +1,4392 @@
+#+TITLE: ASM-GP: Assembly Genetic Programming
+#+TODO: TODO(t!) HOLD(h!) STARTED(s!) | DONE(d!)
+#+OPTIONS: num:nil ^:nil
+#+LaTeX_CLASS: normal
+#+STARTUP: hideblocks
+
+* ASM-GP
+  :PROPERTIES:
+  :j-file:   index
+  :END:
+** Introduction
+This work uses Genetic Programming (GP) to evolve the assembly (ASM)
+code compiled from existing C programs with the goal of fixing bugs in
+the original C source code.
+
+All [[file:code.org::gp-operations][GP Operations]] operate directly on the level of the x86 assembly
+with no intermediate representation.
+
+Unit tests from the original C program are used to assess the fitness
+of evolved variants and determine when the bug has successfully been
+repaired.
+
+This project is implemented entirely in [[http://clojure.org][clojure]], a lisp which runs on
+the Java Virtual Machine and has a robust infrastructure for
+multithreaded programming.
+
+Read more [[file:./about.html][about ASM-GP]].
+
+** Experiments
+#+begin_html 
+  <ul>
+    {% for post in site.categories.experiment limit:10 %}
+    <li>
+      <a href=".{{ post.url }}">{{ post.title }}</a>
+    </li>
+    {% endfor %}
+  </ul>
+#+end_html
+
+** Tasks
+#+begin_html 
+  <ul>
+    {% for post in site.categories.task limit:10 %}
+    <li>
+      <a href=".{{ post.url }}">{{ post.title }}</a>
+    </li>
+    {% endfor %}
+  </ul>
+#+end_html
+
+* About
+  :PROPERTIES:
+  :j-file:   about
+  :END:
+This work extends the [[http://genprog.adaptive.cs.unm.edu/][genprog]] methodology to operate directly on the
+the assembly code compiled from extant C programs.
+
+The main motivation for moving from C to ASM is the observation that
+the current genprog technique is constrained by it's large step size.
+A change of even a single line of C source code can have a drastic
+effect on the behavior of the program -- as evidenced by the fact that
+genprog runs often progress from the baseline individual to the
+solution in a single step.  As our fitness functions improve to supply
+more incremental fitness values the benefits of a representation like
+ASM which admits smaller steps in the fitness space may become more
+pronounced.
+
+ASM offers additional advantages of
+- this technique could be applied to any program which compiles to x86
+  assembly greatly increasing the range of fixable programs -- also,
+  since the ASM representation is currently not tailored to x86
+  assembly it should be equally applicable to other assembly languages
+  like Java Bytecode which runs on the Java Virtual Machine
+- the greater simplicity of ASM code vs. C code
+- the consistent scope of ASM code which has no local variables make
+  code reuse more practical both within an individual ASM file and
+  across separate bug repairs
+
+* Code
+  :PROPERTIES:
+  :results:  silent
+  :session:  asm-gp
+  :tangle:   src/asm-gp
+  :j-file:   code
+  :END:
+To use this code, evaluate this subtree in your slime session.
+1) tangle out a clojure file by calling `org-babel-tangle'
+2) load the file in your slime buffer
+   #+begin_src clojure :tangle no
+     (load-file "src/asm-gp.clj")
+     (in-ns 'asm-gp)
+   #+end_src
+3) try out one of the scenarios in [[usage]]
+   
+** Namespace and included libraries
+#+begin_src clojure
+  (ns asm-gp
+      (:require (clojure.contrib
+                 (duck-streams :as f)
+                 (shell-out :as s))
+                (clojure.contrib.generic (math-functions :as m)))
+      (:import (java.io BufferedReader InputStreamReader File)
+               (java.util ArrayList Collections)))
+#+end_src
+
+** Utility functions
+*** macros
+
+#+begin_src clojure
+(defmacro while-let
+  "Like while, but uses when-let instead of when."
+  [test & body]
+  `(loop []
+     (when-let ~test
+       ~@body
+       (recur))))
+#+end_src
+
+a =message= function like in elisp
+#+begin_src clojure
+  (defn message
+    [fmt & args]
+    (println (apply format (cons fmt args))))
+#+end_src
+
+timeout long-running commands
+#+begin_src clojure
+  (defmacro with-timeout [ms & body]
+    `(let [f# (future ~@body)]
+       (.get f# ~ms java.util.concurrent.TimeUnit/MILLISECONDS)))
+#+end_src
+
+*** serialization
+- write an object to a file
+  #+begin_src clojure
+    (defn write-obj
+      "Write a clojure object to a file" [f obj]
+      (f/spit f (pr-str obj)))
+  #+end_src
+- read an object from a file
+  #+begin_src clojure
+    (defn read-obj
+      "Read a clojure object from a file" [f]
+      (with-in-str (slurp f) (read)))
+  #+end_src
+
+*** random/weighted list access
+#+begin_src clojure
+  (defn shuffle
+    "Shuffles coll using a Java ArrayList." [coll]
+    (let [l (ArrayList. coll)] (Collections/shuffle l) (seq l)))
+  
+  (defn place
+    "Pick a random location from a sequence"
+    [lst]
+    (rand-int (.size lst)))
+  
+  (defn pick
+    "Pick and return a random element from a sequence."
+    [lst] (nth lst (place lst)))
+  
+  (defn weighted-place
+    "Pick a random location in an asm individual weighted by the
+     associated bad-path."
+    ([asm] (weighted-place asm :bad-weight))
+    ([asm weight-key]
+       (pick
+        ((fn [index asm assoc] ;; expand each place by it's weight
+           (if (empty? asm)
+             assoc
+             (recur
+              (inc index)
+              (rest asm)
+              (concat (repeat (m/ceil (or (weight-key (first asm)) 0)) index) assoc))))
+         0 asm (range (.size asm))))))
+  
+  (defn weighted-pick
+    "Return a random element in an asm individual weighted by the
+     associated bad-path"
+    ([asm]
+       (nth asm (weighted-place asm)))
+    ([asm weight-key]
+       (nth asm (weighted-place asm weight-key))))
+#+end_src
+
+*** reading and writing assembly
+#+begin_src clojure
+  (defn read-asm
+    "Read in an assembly file as list and parse cmd lines."
+    [path]
+    {:representation
+     (map (fn [el]
+            {:line (if-let [part (re-matches #"\t(.*)\t(.*)" el)]
+                     (rest part)
+                     el)})
+          (f/read-lines path))
+     :compile nil :fitness nil :trials nil :operations nil})
+  
+  (defn write-asm
+    [f asm]
+    (f/write-lines
+     (f/file-str f)
+     (map #(let [line (:line %)]
+             (if (not (string? line))
+               (apply str "\t" (interpose "\t" line)) line))
+          (:representation asm))))
+#+end_src
+
+** Parameters
+   :PROPERTIES:
+   :CUSTOM_ID: parameters
+   :END:
+
+#+begin_src clojure
+  (def target-fitness 10)
+  (def max-generations 10)
+  (def population-size 40)
+  (def tournament-size 2)
+  (def use-tournament false)
+  (def max-section-size 1)
+  (def fitness-cache-path
+       (.getPath (f/file-str "~/research/code/data/fitness-cache.clj")))
+  (def baseline-path nil)
+  (def good-path-path nil)
+  (def bad-path-path nil)
+  (def good-mult 1)
+  (def bad-mult 5)
+  (def compiler "gcc")
+  (def compiler-flags nil) ;; (list "-pthread")
+  (def test-dir nil)  ;; "~/research/code/gcd/"
+  (def test-timeout 2000)
+  (def test-good nil) ;; "./test-good.sh"
+  (def test-bad nil)  ;; "./test-bad.sh"
+#+end_src
+
+** Assembly Manipulation
+*** apply path
+Apply the weights in a good or bad path to a GP individual
+#+begin_src clojure
+  (defn apply-path
+    "Apply the weights in a path to a GP individual"
+    [asm key path]
+    (assoc asm
+      :representation
+      (reduce #(let [place (first %2) weight (second %2)]
+                 (if (< place (.size %1))
+                   (concat
+                    (take place %1)
+                    (list (assoc (nth %1 place) key weight))
+                    (drop (inc place) %1))
+                   %1)) (:representation asm) path)))
+#+end_src
+
+** GP Operations
+   :PROPERTIES:
+   :CUSTOM_ID: gp-operations
+   :END:
+
+#+begin_src clojure
+  (defn section-length
+    "Limit the size of sections of ASM used for GP operations."
+    [single length]
+    (if single
+      (if (number? single) (min single length) 1)
+      (inc (rand-int (min max-section-size length)))))
+#+end_src
+
+*** swap-asm
+#+begin_src clojure
+  (defn swap-asm
+    "Swap two lines or sections of the asm."
+    ([asm] (swap-asm asm nil))
+    ([asm single]
+       (assoc asm
+         :representation
+         (let [asm (:representation asm)
+               first (weighted-place asm)
+               second (weighted-place asm)]
+           (if (= first second)
+             asm
+             (let [left (min first second)
+                   right (max first second)
+                   left-length
+                   (section-length single
+                                   (.size (take (- right left) (drop left asm))))
+                   right-length (section-length single (.size (drop right asm)))]
+               (concat
+                (take left asm)
+                (take right-length (drop right asm))
+                (take (- right (+ left left-length))
+                      (drop (+ left left-length) asm))
+                (take left-length (drop left asm))
+                (drop (+ right right-length) asm)))))
+         :operations (cons :swap (:operations asm)))))
+#+end_src
+
+*** delete-asm
+delete a section
+#+begin_src clojure
+  (defn delete-asm
+    "Delete a line or section from the asm.  Optional second argument
+  will force single line deletion rather than deleting an entire
+  section."
+    ([asm] (delete-asm asm nil))
+    ([asm single]
+       (assoc asm
+         :representation
+         (let [asm (:representation asm)
+               start (weighted-place asm)
+               length (section-length single (.size (drop start asm)))]
+           (concat (take start asm) (drop (+ start length) asm)))
+         :operations (cons :delete (:operations asm)))))
+#+end_src
+
+*** append-asm
+append a section or line into a random place
+#+begin_src clojure
+  (defn append-asm
+    "Inject a line from the asm into a random location in the asm.
+    Optional third argument will force single line injection rather than
+    injecting an entire section."
+    ([asm] (append-asm asm nil))
+    ([asm single]
+       (assoc asm
+         :representation
+         (let [asm (:representation asm)
+               start (weighted-place asm :good-weight)
+               length (section-length single (.size (drop start asm)))
+               point (weighted-place asm)]
+           (concat (take point asm) (take length (drop start asm))
+                   (drop point asm)))
+         :operations (cons :append (:operations asm)))))
+#+end_src
+
+*** mutate-asm
+which here means either delete, append, or swap
+#+begin_src clojure
+  (defn mutate-asm
+    "Mutate the asm with either delete-asm, append-asm, or swap-asm.
+    For now we're forcing all changes to operate by line rather than
+    section." [asm]
+    (let [choice (rand-int 3)]
+      (cond
+       (= choice 0) (delete-asm asm)
+       (= choice 1) (append-asm asm)
+       (= choice 2) (swap-asm asm))))
+#+end_src
+
+*** compile-asm
+#+begin_src clojure
+  (defn compile-asm
+    "Compile the asm, set it's :compile field to the path to the
+    compiled binary if successful or to nil if unsuccessful."  [asm]
+    (let [asm-source (.getPath (File/createTempFile "variant" ".S"))
+          asm-bin (.getPath (File/createTempFile "variant" "bin"))]
+      (write-asm asm-source asm)
+      (assoc asm
+        :compile
+        (when (= 0 (:exit
+                    (apply
+                     s/sh
+                     (concat
+                      (apply list compiler compiler-flags)
+                      (list "-o" asm-bin asm-source :return-map true)))))
+          (s/sh "chmod" "+x" asm-bin)
+          asm-bin))))
+#+end_src
+
+** Fitness Evaluation
+We'll cache already calculated finesses in a global hash which is
+protected behind a [[http://clojure.org/refs][ref]].
+#+begin_src clojure
+  (def fitness-cache (ref {}))
+#+end_src
+
+We'll track the total number of fitness evaluations in a global
+counter also protected behind a ref.
+#+begin_src clojure
+  (def fitness-count (ref 0))
+#+end_src
+
+#+begin_src clojure
+  (defn evaluate-asm
+    "Take an individual, evaluate it and pack it's score into
+    it's :fitness field."  [asm]
+    ;; increment our global fitness counter
+    (dosync (alter fitness-count inc))
+    (assoc
+        ;; evaluate the fitness of the individual
+        (if (@fitness-cache (.hashCode (:representation asm)))
+          (assoc asm ;; cache hit
+            :fitness (@fitness-cache (.hashCode (:representation asm)))
+            :compile true)
+          (let [asm (compile-asm asm) ;; cache miss
+                test-good (.getPath (f/file-str test-dir test-good))
+                test-bad (.getPath (f/file-str test-dir test-bad))
+                bin (:compile asm)
+                run-test (fn [test mult]
+                           (* mult
+                              (try
+                               (.size
+                                (remove #(= "" %)
+                                        (seq (.split (:out
+                                                      (with-timeout test-timeout
+                                                        (s/sh test bin :return-map true)))
+                                                     "\n"))))
+                               (catch java.util.concurrent.TimeoutException e 0))))]
+            (assoc asm
+              :fitness ((dosync (alter fitness-cache assoc (.hashCode
+                                                            (:representation asm))
+                                       (if bin ;; new fitness
+                                         (+ (run-test test-good good-mult)
+                                            (run-test test-bad bad-mult))
+                                         0)))
+                        (.hashCode (:representation asm))))))
+      :trials @fitness-count))
+#+end_src
+
+** Evolution
+*** populate
+#+begin_src clojure
+  (defn populate
+    "Return a population starting with a baseline individual.
+    Pass :group true as optional arguments to populate from a group of
+    multiple baseline individuals."
+    [asm & opts]
+    ;; this doesn't work as list? will return true no matter what, we
+    ;; must use an optional keyword argument...
+    (let [asm (if (get (apply hash-map opts) :group false)
+                asm (list asm))]
+      ;; calculate their fitness
+      (pmap #(evaluate-asm %)
+            ;; include the originals
+            (concat asm
+                    ;; create random mutants
+                    (take (- population-size (.size asm))
+                          (repeatedly #(mutate-asm (pick asm))))))))
+#+end_src
+
+*** selection -- tournament and sus
+tournament selection
+#+begin_src clojure
+  (defn tournament
+    "Select an individual from the population via tournament selection."
+    [population n]
+    (take n
+          (repeatedly
+           (fn []
+             (last
+              (sort-by :fitness
+                       (take tournament-size
+                             (repeatedly #(pick population)))))))))
+#+end_src
+
+Stochastic universal Sampling (see [[wiki:Stochastic_universal_sampling]])
+#+begin_src clojure
+  (defn stochastic-universal-sample
+    "Stochastic universal sampling"
+    [population n]
+    (let [total-fit (reduce #(+ %1 (:fitness %2)) 0 population)
+          step-size (/ total-fit n)]
+      (loop [pop (reverse (sort-by :fitness (shuffle population)))
+             accum 0 marker 0
+             result '()]
+        (if (> n (.size result))
+          (if (> marker (+ accum (:fitness (first pop))))
+            (recur (rest pop) (+ accum (:fitness (first pop))) marker result)
+            (recur pop accum (+ marker step-size) (cons (first pop) result)))
+          result))))
+#+end_src
+
+#+begin_src clojure
+  (defn select-asm [population n]
+    (if use-tournament
+      (tournament population n)
+      (stochastic-universal-sample population n)))
+#+end_src
+
+*** evolve
+#+begin_src clojure
+  (defn evolve
+    "Build a population from a baseline individual and evolve until a
+  solution is found or the maximum number of generations is reached.
+  Return the best individual present when evolution terminates."
+    [asm]
+    (loop [population (populate asm)
+           generation 0]
+      (let [best (last (sort-by :fitness population))
+            mean (/ (float (reduce + 0 (map :fitness population))) (.size population))]
+        ;; write out the best so far
+        (message "generation %d mean-score %S best{:fitness %S, :trials %d}"
+                 generation mean (:fitness best) (:trials best))
+        (write-obj (format "variants/gen.%d.best.%S.clj" generation (:fitness best))
+                   best)
+        (if (>= (:fitness best) target-fitness)
+          (do ;; write out the winner to a file and return
+            (message "success after %d generations and %d fitness evaluations"
+                     generation @fitness-count)
+            (write-obj "variants/best.clj" best) best)
+          (if (>= generation max-generations)
+            (do ;; print out failure message and return the best we found
+              (message "failed after %d generations and %d fitness evaluations"
+                       generation @fitness-count) best)
+            (recur
+             (select-asm
+              (concat
+               (dorun
+                (pmap #(evaluate-asm %)
+                      (pmap #(mutate-asm %)
+                            (select-asm population population-size))))
+               population)
+              population-size)
+             (+ generation 1)))))))
+#+end_src
+** Run experiment
+a macro to assist in running an experiment
+#+begin_src clojure
+  (defmacro run-experiment [& body]
+    `(do
+       ;; prepare the experiment
+       ;; ----------------------
+       ;; 1) load up the fitness cache
+       (def fitness-cache (ref (read-obj (.getPath (f/file-str fitness-cache-path)))))
+       ;; 2) load up the good and bad paths
+       (let [load-path# (fn [first-path# second-path#]
+                          (reduce ;; log of the weights
+                           (fn [a# el#]
+                             (assoc a# (first el#) (m/log (inc (second el#))))) {}
+                             ;; 1D Gaussian Smoothing of weights
+                             (let [kernel# {-3 0.006, -2 0.061, -1 0.242, 0 0.383, 1 0.242, 2 0.061, 3 0.006}]
+                               (reduce ;; for each weighted element of the bad-path
+                                (fn [accum# el#]
+                                  (reduce ;; for each part of the Gaussian kernel
+                                   (fn [a# f#]
+                                     (let [place# (+ (first el#) (first f#))]
+                                       (assoc a# place# 
+                                              (+ (get a# place# 0)
+                                                 (* (second f#) (second el#))))))
+                                   accum# kernel#)) {}
+                                   (reduce
+                                    (fn [a# f#] (let [val# (get a# f# 0)]
+                                                  (if (> val# 1)
+                                                    (assoc a# f# (dec val#))
+                                                    (dissoc a# f#))))
+                                    (reduce
+                                     (fn [a# f#] (assoc a# f# (inc (get a# f# 0)))) {}
+                                     (map (fn [arg#] (Integer/parseInt arg#))
+                                          (f/read-lines first-path#)))
+                                    (map (fn [arg#] (Integer/parseInt arg#))
+                                         (f/read-lines second-path#)))))))]
+         (if (and bad-path-path good-path-path)
+           (do
+             (def bad-path (load-path# bad-path-path good-path-path))
+             (def good-path (load-path# good-path-path bad-path-path))
+             (def baseline (apply-path (apply-path
+                                        (read-asm baseline-path)
+                                        :good-weight good-path) :bad-weight bad-path)))
+           (def baseline (read-asm baseline-path))))
+       ;; 3) load up the baseline individual -- with path weights
+       
+       ;; 4) run the experiment
+       (let [temp# (do ~@body)]
+         ;; 5) save the fitness-cache
+         (write-obj (.getPath (f/file-str fitness-cache-path))
+                    @fitness-cache)
+         ;; 6) return the result
+         temp#)))
+#+end_src
+
+** Java Byte-Code Functions
+    :PROPERTIES:
+    :tangle:   src/bytecode-gp
+    :END:
+
+in the asm-gp name-space
+#+begin_src clojure
+  (in-ns 'asm-gp)
+  (import '(org.apache.bcel.classfile ClassParser)
+          '(org.apache.bcel.generic ClassGen MethodGen InstructionList))
+#+end_src
+
+introducing a new global variable to hold information needed to write
+new byte-code strings to a =.class= file.
+#+begin_src clojure
+  (def base-class nil)
+#+end_src
+
+new functions for reading and writing assembly files
+#+begin_src clojure
+  (defn read-asm
+    "Read in a .class file to a list of Byte-code instructions.  For now
+    we'll just be working with the main function." [path]
+    {:representation
+     (let [class (new ClassGen (.parse (new ClassParser path)))
+           method (new MethodGen
+                       (second (.getMethods class))
+                       (.getClassName class)
+                       (.getConstantPool class))]
+       (.getInstructionList method))
+     :compile nil :fitness nil :trials nil :operations nil})
+  
+  (defn write-asm
+    "Write a list of Byte-code instructions to a file.  Return f if the
+    write was successful, and nil otherwise." [f lst]
+    (if (not base-class)
+      (message "base class is uninitialized!"))
+    (try
+     (let [lst (:representation lst)
+           cls (new ClassGen base-class)
+           mth (new MethodGen (second (.getMethods cls))
+                    (.getClassName cls)
+                    (.getConstantPool cls))]
+       (.setPositions lst false)
+       (.setInstructionList mth lst)
+       (.setMaxStack mth)
+       (.setMaxLocals mth)
+       (.removeLineNumbers mth)
+       (.replaceMethod cls
+                       (second (.getMethods cls))
+                       (.getMethod mth))
+       (.dump (.getJavaClass cls) f)
+       f)
+     (catch Exception e nil)))
+#+end_src
+
+over-defining all GP operations for InstructionLists
+#+begin_src clojure
+  (defmacro gp-op-wrapper
+    "Wrap a GP operation in a try/catch block which will return an empty
+    InstructinoList if any errors are thrown while manipulating the
+    individual."  [& body] `(try ~@body (catch Exception _# (InstructionList.))))
+  
+  (defn swap-asm
+    "Swap two instructions in this InstructionList.  Not Weighted."
+    ([asm _] (swap-asm asm))
+    ([asm]
+       (assoc asm
+         :representation
+         (gp-op-wrapper
+          (let [asm (.copy (:representation asm))
+                handles (seq (.getInstructionHandles asm))
+                place (rand-int (dec (.size handles)))
+                target (pick handles)]
+            (.move asm (nth handles place) target)
+            (.move asm target (nth handles (inc place)))
+            asm))
+         :operations (cons :swap (:operations asm)))))
+  
+  (defn append-asm
+    "Append an instruction somewhere in this InstructionList.  Not
+    Weighted.  Return a copy of the original if the operations fail."
+    ([asm _] (append-asm asm))
+    ([asm]
+       (assoc asm
+         :representation
+         (gp-op-wrapper
+          (let [asm (.copy (:representation asm))
+                handles (seq (.getInstructionHandles asm))]
+            (.append asm
+                     (pick handles)
+                     (.getInstruction (pick handles)))
+            asm))
+         :operations (cons :append (:operations asm)))))
+  
+  (defn delete-asm
+    "Remove an instruction from list InstructionList.  Not Weighted"
+    ([asm _] (delete-asm asm))
+    ([asm]
+       (assoc asm
+         :representation
+         (gp-op-wrapper
+          (let [asm (.copy (:representation asm))
+                handles (seq (.getInstructionHandles asm))]
+            (.delete asm (pick handles))
+            asm))
+         :operations (cons :delete (:operations asm)))))
+#+end_src
+
+new fitness and compilation functions
+#+begin_src clojure
+  (defn compile-asm
+    "Compile the asm and return a path to the resulting binary.  Return
+    nil if the compilation (write) fails."  [asm]
+    (let [asm-dir (.getPath (File/createTempFile "variant" ""))]
+      (s/sh "rm" asm-dir) (s/sh "mkdir" asm-dir)
+      (assoc asm
+        :compile
+        (if (write-asm (str asm-dir "/" (.getClassName base-class) ".class") asm)
+          asm-dir
+          nil))))
+#+end_src
+
+* Experiments
+  :PROPERTIES:
+  :CUSTOM_ID: experiments
+  :session:  asm-gp
+  :END:
+** real program repair summary
+
+|           | LOC (in machine-code) | Pos. tests | Neg. tests | Success | GTR |
+|-----------+-----------------------+------------+------------+---------+-----|
+| sendmail  | 667                   | 5          | 1          |    100% |   1 |
+| deroff    | 7041                  | 5          | 1          |     27% |   1 |
+| nullhttpd | 6933                  | 5          | 1          |      3% |   1 |
+
+** deroff
+*** results
+for the first run which found success in 3/10 runs
+#+begin_src clojure
+  (def target-fitness 10)
+  (def max-generations 20)
+  (def population-size 400)
+  (def use-tournament false)
+  (def max-section-size 1)
+  (def good-mult 1)
+  (def bad-mult 5)
+  (def gcc-flags nil)
+  (def baseline-path "deroff.s")
+  (def good-path-path "good.path")
+  (def bad-path-path "bad.path")
+  (def test-dir "~/research/code/deroff/")
+  (def fitness-cache-path
+       (.getPath (f/file-str "~/research/code/deroff/fitness-cache.clj")))
+  (def test-good "./my-test-good.sh")
+  (def test-bad "./my-test-bad.sh")
+#+end_src
+
+*** method
+    :PROPERTIES:
+    :tangle:   test/deroff
+    :results:  silent
+    :session:  asm-gp
+    :END:
+
+The following steps are tangled to the =test/deroff.clj= script which can
+be run from inside of the =deroff= directory using
+#+begin_src sh :tangle no
+  java -Xss2m -cp ../../../src/clojure/clojure.jar:../../../src/clojure-contrib/clojure-contrib.jar clojure.main ../test/deroff.clj
+#+end_src
+
+1) create the =deroff.s= file
+   #+begin_src sh :tangle no
+     cd deroff
+     gcc -S deroff_comb.c
+     mv deroff_comb.s deroff.s
+   #+end_src
+2) start a slime repl in the =deroff/= directory
+3) load the resulting file and step into the namespace
+   #+begin_src clojure
+     (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+   #+end_src
+4) set the GP parameters
+   #+begin_src clojure
+     (def target-fitness 10)
+     (def max-generations 20)
+     (def population-size 400)
+     (def use-tournament false)
+     (def max-section-size 1)
+     (def good-mult 1)
+     (def bad-mult 5)
+     (def compiler "gcc")
+     (def compiler-flags nil)
+     (def baseline-path "deroff.s")
+     (def good-path-path "good.path")
+     (def bad-path-path "bad.path")
+     (def test-timeout 2000)
+     (def test-dir "~/research/code/deroff/")
+     (def fitness-cache-path
+          (.getPath (f/file-str "~/research/exp/deroff/fitness-cache.clj")))
+     (def test-good "./my-test-good.sh")
+     (def test-bad "./my-test-bad.sh")
+   #+end_src
+5) run 500 iterations -- note that =asm-gp-pack= must be in your path
+   #+begin_src clojure
+     (run-experiment
+      (dorun
+       (map  (fn [run]
+               (do
+                 (evolve baseline)
+                 (let [save-dir (str "variants/" (.toString run))]
+                   (s/sh "mkdir" save-dir)
+                   (s/sh "asm-gp-pack" save-dir)
+                   (write-obj fitness-cache-path @fitness-cache))))
+             (range 500))))
+   #+end_src
+
+** s4
+   :PROPERTIES:
+   :blog:     t
+   :type:     experiment
+   :END:
+
+*** method
+    :PROPERTIES:
+    :tangle:   test/s4
+    :results:  silent
+    :session:  asm-gp
+    :END:
+
+The following steps are tangled to the =test/s4.clj= script which can
+be run from inside of the =s4= directory using
+#+begin_src sh :tangle no
+  java -cp ../../../src/clojure/clojure.jar:../../../src/clojure-contrib/clojure-contrib.jar clojure.main ../test/s4.clj
+#+end_src
+
+1) create the =s4.s= file
+   #+begin_src sh :tangle no
+     cd s4
+     gcc -S s4.c
+   #+end_src
+2) start a slime repl in the =s4/= directory
+3) load the resulting file and step into the namespace
+   #+begin_src clojure
+     (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+   #+end_src
+4) set the GP parameters
+   #+begin_src clojure
+     (def target-fitness 8)
+     (def max-generations 20)
+     (def population-size 400)
+     (def use-tournament false)
+     (def max-section-size 3)
+     (def good-mult 2)
+     (def bad-mult 4)
+     (def compiler "gcc")
+     (def compiler-flags nil)
+     (def baseline-path "s4.s")
+     (def good-path-path "good.path")
+     (def bad-path-path "bad.path")
+     (def test-timeout 2000)
+     (def fitness-cache-path
+          (.getPath (f/file-str "~/research/exp/s4/fitness-cache.clj")))
+     (def test-dir "~/research/code/s4/")
+     (def test-good "./my-test-good.sh")
+     (def test-bad "./my-test-bad.sh")
+   #+end_src
+5) run 500 iterations -- note that =asm-gp-pack= must be in your path
+   #+begin_src clojure
+     (run-experiment
+      (dorun
+       (map  (fn [run]
+               (do
+                 (evolve baseline)
+                 (let [save-dir (str "variants/" (.toString run))]
+                   (s/sh "mkdir" save-dir)
+                   (s/sh "asm-gp-pack" save-dir)
+                   (write-obj fitness-cache-path @fitness-cache))))
+             (range 500))))
+   #+end_src
+
+** flex
+   :PROPERTIES:
+   :blog:     t
+   :type:     experiment
+   :END:
+
+*** method
+    :PROPERTIES:
+    :tangle:   test/flex
+    :results:  silent
+    :session:  asm-gp
+    :END:
+
+The following steps are tangled to the =test/flex.clj= script which can
+be run from inside of the =flex= directory using
+#+begin_src sh :tangle no
+  java -Xss256m -Xmx256m -cp ../../../src/clojure/clojure.jar:../../../src/clojure-contrib/clojure-contrib.jar clojure.main ../test/flex.clj
+#+end_src
+
+1) create the =flex.s= file
+   #+begin_src sh :tangle no
+     cd flex
+     gcc -S flex_comb.c
+     mv flex_comb.s flex.s
+   #+end_src
+2) start a slime repl in the =flex/= directory
+3) load the resulting file and step into the namespace
+   #+begin_src clojure
+     (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+   #+end_src
+4) set the GP parameters
+   #+begin_src clojure
+     (def target-fitness 10)
+     (def max-generations 20)
+     (def population-size 400)
+     (def use-tournament false)
+     (def max-section-size 1)
+     (def good-mult 1)
+     (def bad-mult 5)
+     (def compiler "gcc")
+     (def compiler-flags nil)
+     (def baseline-path "flex.s")
+     (def good-path-path "good.path")
+     (def bad-path-path "bad.path")
+     (def test-timeout 2000)
+     (def test-dir "~/research/code/flex/")
+     (def fitness-cache-path
+          (.getPath (f/file-str "~/research/exp/flex/fitness-cache.clj")))
+     (def test-good "./my-test-good.sh")
+     (def test-bad "./my-test-bad.sh")
+   #+end_src
+5) run 500 iterations -- note that =asm-gp-pack= must be in your path
+   #+begin_src clojure
+     (run-experiment
+      (dorun
+       (map  (fn [run]
+               (do
+                 (evolve baseline)
+                 (let [save-dir (str "variants/" (.toString run))]
+                   (s/sh "mkdir" save-dir)
+                   (s/sh "asm-gp-pack" save-dir)
+                   (write-obj fitness-cache-path @fitness-cache))))
+             (range 500))))
+   #+end_src
+
+** uniq
+*** method
+    :PROPERTIES:
+    :tangle:   test/uniq
+    :results:  silent
+    :session:  asm-gp
+    :END:
+
+The following steps are tangled to the =test/uniq.clj= script which can
+be run from inside of the =uniq= directory using
+#+begin_src sh :tangle no
+  java -cp ../../../src/clojure/clojure.jar:../../../src/clojure-contrib/clojure-contrib.jar clojure.main ../test/uniq.clj
+#+end_src
+
+1) create the =uniq.s= file
+   #+begin_src sh :tangle no
+     cd uniq
+     gcc -S uniq.c
+   #+end_src
+2) create good and bad paths (ran good-test 10 times and bad-path 1000
+   times)
+3) start a slime repl in the =uniq/= directory
+4) load the resulting file and step into the namespace
+   #+begin_src clojure
+     (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+   #+end_src
+5) set the GP parameters
+   #+begin_src clojure
+     (def target-fitness 10)
+     (def max-generations 20)
+     (def population-size 400)
+     (def use-tournament false)
+     (def max-section-size 1)
+     (def good-mult 1)
+     (def bad-mult 5)
+     (def gcc-flags nil)
+     (def fitness-cache-path
+          (.getPath (f/file-str "~/research/exp/uniq/fitness-cache.clj")))
+     (def baseline-path "uniq.s")
+     (def good-path-path "good.path")
+     (def bad-path-path "bad.path")
+     (def test-timeout 2000)
+     (def test-dir "~/research/code/uniq/")
+     (def test-good "./test-good.sh")
+     (def test-bad "./test-bad.sh")
+   #+end_src
+6) run 500 iterations -- note that =asm-gp-pack= must be in your path
+   #+begin_src clojure
+     (run-experiment
+      (dorun
+       (map  (fn [run]
+               (do
+                 (evolve baseline)
+                 (let [save-dir (str "variants/" (.toString run))]
+                   (s/sh "mkdir" save-dir)
+                   (s/sh "asm-gp-pack" save-dir)
+                   (write-obj fitness-cache-path @fitness-cache))))
+             (range 500))))
+   #+end_src
+
+** gp operations in other languages
+*** Haskell
+**** script
+    :PROPERTIES:
+    :tangle:   test/gp-op-haskell
+    :END:
+Going to try to split this up into multiple independent runs through a
+clojure script, because for some reason zsh kept insisting on killing
+off the single large monolithic run.
+
+tangled to the =test/gp-op.clj= script which can be run using
+#+begin_src sh :tangle no
+  java -cp ../../../src/clojure/clojure.jar:../../../src/clojure-contrib/clojure-contrib.jar clojure.main ../test/gp-op-haskell.clj
+#+end_src
+
+#+begin_src clojure :session asm-gp
+  (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+  (def target-fitness 10)
+  (def good-mult 1)
+  (def bad-mult 5)
+  (def compiler "ghc")
+  (def baseline-path "gcd.s")
+  (def good-path-path "good.path")
+  (def bad-path-path "bad.path")
+  (def test-dir "~/research/code/gcd_h/")
+  (def test-good "./test-good.sh")
+  (def test-bad "./test-bad.sh")
+  (def fitness-cache-path
+        (.getPath (f/file-str "~/research/code/gcd_h/fitness-cache.clj")))
+  (def section-size (try (Integer/parseInt (second *command-line-args*))
+                         (catch Exception e 1)))
+  
+  (message "running experiment")
+  (run-experiment
+   (dorun
+    (map
+     (fn [op]
+       (message "%s %d" (name op) section-size)
+       (write-obj
+        (format "./gp-operations/%s.%d.results"
+                (name op) section-size)
+        (pmap #(let [new (cond
+                          (= op 'swap-asm)
+                          (swap-asm baseline section-size)
+                          (= op 'delete-asm)
+                          (delete-asm baseline section-size)
+                          (= op 'append-asm)
+                          (append-asm baseline section-size))]
+                 {:run %
+                  :individual new
+                  :fitness (evaluate-asm new)})
+              (range 1000))))
+     '(swap-asm delete-asm append-asm))))
+#+end_src
+
+*** java
+|                      | append | delete | swap |
+|----------------------+--------+--------+------|
+| total fitness        |    662 |      0 |   56 |
+| fitness = 5          |    129 |      0 |    6 |
+
+**** java-gp-op script
+    :PROPERTIES:
+    :tangle:   test/java-gp-op
+    :END:
+tangled to the =test/java-gp-op.clj= script which can be run using
+#+begin_src sh :tangle no
+  java -cp ../../../src/clojure/clojure.jar:../../../src/clojure-contrib/clojure-contrib.jar:../lib/bcel-5.3-SNAPSHOT.jar clojure.main ../test/java-gp-op.clj
+#+end_src
+
+#+begin_src clojure :session asm-gp
+  (load-file "../src/asm-gp.clj")
+  (load-file "../src/bytecode-gp.clj")
+  (in-ns 'asm-gp)
+  (def target-fitness 10)
+  (def max-generations 10)
+  (def population-size 40)
+  (def use-tournament false)
+  (def good-mult 1)
+  (def bad-mult 5)
+  (def gcc-flags nil)
+  (def baseline-path "gcd.class")
+  (def fitness-cache-path
+       (.getPath (f/file-str "~/research/code/gcd_java/fitness-cache.clj")))
+  (def good-path-path nil)
+  (def bad-path-path nil)
+  (def test-dir "~/research/code/gcd_java/")
+  (def test-good "./my-test-good.sh")
+  (def test-bad "./my-test-bad.sh")
+  (def section-size
+       (try (Integer/parseInt (first *command-line-args*))
+            (catch Exception e 1)))
+  (def base-class (.parse (new ClassParser "gcd.class")))
+  
+  (message "running experiment")
+  (run-experiment
+   (dorun
+    (map
+     (fn [op]
+       (message "%s %d" (name op) section-size)
+       (write-obj
+        (format "./gp-operations/%s.%d.results"
+                (name op) section-size)
+        (pmap #(let [new (cond
+                          (= op 'swap-asm)
+                          (swap-asm baseline section-size)
+                          (= op 'delete-asm)
+                          (delete-asm baseline section-size)
+                          (= op 'append-asm)
+                          (append-asm baseline section-size))]
+                 (message "\t%d" %)
+                 {:run %
+                  :individual (let [handles (seq (.getInstructionHandles new))]
+                                (if (empty? handles)
+                                  "failed-mutation"
+                                  (map (fn [byte-code]
+                                         (.getName (.getInstruction byte-code)))
+                                       handles)))
+                  :fitness (evaluate-asm new)
+                  :compile (if (> (evaluate-asm new) 0)
+                             true
+                             (if (compile-asm new) true false))})
+              (range 1000))))
+     '(append-asm swap-asm delete-asm))))
+#+end_src
+
+** gcd in Java -- Java Byte Code
+*** method
+    :PROPERTIES:
+    :tangle:   test/gcd_java
+    :results:  silent
+    :END:
+
+The following steps are tangled to the =test/java-gcd.clj= script
+which can be run from inside of the =gcd_java= directory using
+#+begin_src sh :tangle no
+  java -cp ../../../src/clojure/clojure.jar:../../../src/clojure-contrib/clojure-contrib.jar:../lib/bcel-5.3-SNAPSHOT.jar:../src clojure.main ../test/java-gcd.clj
+#+end_src
+
+1) create the =gcd.class= file and copy =asm-gp.clj= into the classpath
+   #+begin_src sh :tangle no
+     cd gcd_java
+     javac gcd.java
+     cp ../src/asm-gp.clj ../src/asm_gp.clj 
+   #+end_src
+2) start a slime repl in the =gcd_java/= directory
+3) load up our framework (including some over-defined functions for
+   working with Java =.class= Byte-code files) and step into the
+   namespace
+   #+begin_src clojure
+     (load-file "../src/asm-gp.clj")
+     (load-file "../src/bytecode-gp.clj")
+     (in-ns 'asm-gp)
+   #+end_src
+4) define a =base-class= needed by the new bytecode stuff
+   #+begin_src clojure
+     (def base-class (.parse (new ClassParser "gcd.class")))
+   #+end_src
+5) set the GP parameters
+   #+begin_src clojure
+     (def target-fitness 10)
+     (def max-generations 20)
+     (def population-size 400)
+     (def use-tournament false)
+     (def max-section-size 1)
+     (def good-mult 1)
+     (def bad-mult 5)
+     (def gcc-flags nil)
+     (def baseline-path "gcd.class")
+     (def fitness-cache-path
+          (.getPath (f/file-str "~/research/exp/gcd_java/fitness-cache.clj")))
+     (def good-path-path nil)
+     (def bad-path-path nil)
+     (def test-timeout 4000)
+     (def test-dir "~/research/code/gcd_java/")
+     (def test-good "./my-test-good.sh")
+     (def test-bad "./my-test-bad.sh")
+   #+end_src
+6) run 500 iterations -- note that =asm-gp-pack= must be in your path
+   #+begin_src clojure
+     (run-experiment
+      (dorun
+       (map  (fn [run]
+               (do
+                 (evolve baseline)
+                 (let [save-dir (str "variants/" (.toString run))]
+                   (s/sh "mkdir" save-dir)
+                   (s/sh "asm-gp-pack" save-dir))))
+             (range 500))))
+   #+end_src
+** gcd in Haskell
+   :PROPERTIES:
+   :blog:     t
+   :type:     experiment
+   :END:
+This will attempt to recreate and repair the gcd bug in Haskell.
+
+Here's a working gcd taken from the Haskell Prelude.hs
+#+begin_src haskell
+  gcd      :: (Integral a) => a -> a -> a
+  gcd 0 0  =  error "Prelude.gcd: gcd 0 0 is undefined"
+  gcd x y  =  gcd' (abs x) (abs y)
+              where gcd' x 0  =  x
+                    gcd' x y  =  gcd' y (x `rem` y)
+#+end_src
+
+Here's a buggy version of the above -- writing a buggy Haskell program
+might be the hardest part of this exercise...
+#+begin_src haskell :tangle gcd_h/gcd
+  import System
+  
+  main :: IO ()
+  main = do
+    args <- getArgs
+    buggy_gcd (read (args!!0)::Int) (read (args!!1)::Int)
+        where
+          buggy_gcd     :: (Integral a) => a -> a -> IO()
+          buggy_gcd a b =  if (a == 0) then
+                               do
+                                 print b
+                                 buggy_gcd' a b
+                           else
+                               buggy_gcd' a b
+              where
+                buggy_gcd' a b = if (b == 0) then
+                                     print a
+                                 else
+                                     if (a > b) then
+                                         buggy_gcd' (a - b) b
+                                     else
+                                         buggy_gcd' a (b - a)
+#+end_src
+
+*** results
+The largely unaltered method (the only code change involved adding a
+compiler option so that =ghc= could be used instead of =gcc=) found
+repairs in 15/500 runs.  Although the generated Haskell ASM looked
+much uglier than the C asm, and was much longer (885 lines instead of
+22 lines) 15/500 is a better success rate than the 2/500 repair rate
+with ASM generated from C code.
+
+For what it's worth some of the repair diffs are included here.
+#+begin_src diff
+  686d685
+  <       leal -28(%edi),%eax
+#+end_src
+#+begin_src diff
+  672c672
+  < .LcR0:
+  ---
+  >       movl 4(%ebp),%eax
+  677c677
+  <       movl 4(%ebp),%eax
+  ---
+  > .LcR0:
+#+end_src
+#+begin_src diff
+  475a476
+  >       movl %eax,-4(%ebp)
+#+end_src
+#+begin_src diff
+  263a264
+  >       movl $stg_CAF_BLACKHOLE_info,-4(%edi)
+#+end_src
+
+Of the 15 solutions 7 were unique with two appearing 2 times one
+appearing 3 times and one appearing 5 times
+
+Starting points of the 15 diffs
+| 263a264 |
+| 475a476 |
+| 598c598 |
+| 648a649 |
+| 648a649 |
+| 672c672 |
+| 672c672 |
+| 672c672 |
+| 686d685 |
+| 686d685 |
+| 686d685 |
+| 686d685 |
+| 686d685 |
+| 687d686 |
+| 687d686 |
+
+: 214000 fitness evaluations
+across all 500 runs
+
+*** method
+    :PROPERTIES:
+    :tangle:   test/gcd_h
+    :results:  silent
+    :session:  asm-gp
+    :END:
+
+The following steps are tangled to the =test/gcd.clj= script which can
+be run from inside of the =gcd_h= directory using
+#+begin_src sh :tangle no
+  java -cp ../../../src/clojure/clojure.jar:../../../src/clojure-contrib/clojure-contrib.jar clojure.main ../test/gcd_h.clj
+#+end_src
+
+1) create the =gcd.s= file
+   #+begin_src sh :tangle no
+     cd gcd
+     ghc -S gcd.hs
+   #+end_src
+2) start a slime repl in the =gcd/= directory
+3) load the resulting file and step into the namespace
+   #+begin_src clojure
+     (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+   #+end_src
+4) set the GP parameters
+   #+begin_src clojure
+     (def target-fitness 10)
+     (def max-generations 20)
+     (def population-size 400)
+     (def use-tournament false)
+     (def max-section-size 1)
+     (def fitness-cache-path
+          (.getPath (f/file-str "~/research/exp/gcd_h/fitness-cache.clj")))
+     (def good-mult 1)
+     (def bad-mult 5)
+     (def compiler "ghc")
+     (def compiler-flags nil)
+     (def baseline-path "gcd.s")
+     (def good-path-path "good.path")
+     (def bad-path-path "bad.path")
+     (def test-timeout 2000)
+     (def test-dir "~/research/code/gcd_h/")
+     (def test-good "./test-good.sh")
+     (def test-bad "./test-bad.sh")
+   #+end_src
+5) run 500 iterations -- note that =asm-gp-pack= must be in your path
+   #+begin_src clojure
+     (run-experiment
+      (dorun
+       (map  (fn [run]
+               (do
+                 (evolve baseline)
+                 (let [save-dir (str "variants/" (.toString run))]
+                   (s/sh "mkdir" save-dir)
+                   (s/sh "asm-gp-pack" save-dir))))
+             (range 500))))
+   #+end_src
+
+** gcd
+   :PROPERTIES:
+   :blog:     t
+   :type:     experiment
+   :END:
+Now that the asm codebase has been brought into line with the existing
+genprog methodology we should be able to directly inspect the effects
+of changing the representation from a C AST to a linear string of ASM
+commands.
+
+The only difference between this new setup and the traditional genprog
+implementation aside from representation is the construction of our
+bad and good paths -- which is very representation dependent.
+
+*** results
+- Using Stochastic Universal Sampling and allowing GP operations to
+  operation on only on single lines of code, with a population of 40
+  and a max of 10 generations.  2/500 runs found a solution, resulting
+  in the following two solutions
+  #+begin_src diff
+    20c20
+    <       addq    $8, %rax
+    ---
+    >       addq    $16, %rax
+    28c28
+    <       addq    $16, %rax
+    ---
+    >       addq    $8, %rax
+  #+end_src
+  #+begin_src diff
+    26c26
+    <       movsd   %xmm0, -8(%rbp)
+    ---
+    >       movsd   %xmm0, -16(%rbp)
+    34c34
+    <       movsd   %xmm0, -16(%rbp)
+    ---
+    >       movsd   %xmm0, -8(%rbp)
+  #+end_src
+
+- Using the same parameters as above but allowing GP operations to
+  operate on sections of code between 1-3 lines in length resulted in
+  6/500 runs finding a solution, most solutions found were similar to
+  the following
+  #+begin_src diff
+    42a43,44
+    >       movsd   %xmm0, -8(%rbp)
+    >       jmp     .L4
+  #+end_src
+
+The following results were generated using larger populations than the
+genprog standard.
+
+- using Stochastic Universal Sampling and allowing GP operations to
+  operate on sections of code between 1-3 commands in length, with a
+  population of 400 and a maximum of 10 generations. 75/500 runs
+  succeeded.  Some interesting new solutions looking like
+  #+begin_src diff
+    40a41,42
+    >       movsd   %xmm0, -8(%rbp)
+    >       jmp     .L4
+  #+end_src
+  #+begin_src diff
+    43a44,45
+    >       leave
+    >       ret
+  #+end_src
+  #+begin_src diff
+    43a44,46
+    >       movl    $0, %eax
+    >       leave
+    >       ret
+  #+end_src
+  #+begin_src diff
+    20c20
+    <       addq    $8, %rax
+    ---
+    >       addq    $16, %rax
+    28c28
+    <       addq    $16, %rax
+    ---
+    >       addq    $8, %rax
+  #+end_src
+  and
+  #+begin_src diff
+    26c26
+    <       movsd   %xmm0, -8(%rbp)
+    ---
+    >       movsd   %xmm0, -16(%rbp)
+    34c34
+    <       movsd   %xmm0, -16(%rbp)
+    ---
+    >       movsd   %xmm0, -8(%rbp)    
+  #+end_src
+  only one of which looks like something that a person would generate
+  by hand.
+  
+**** intermediate results
+The following results are from intermediate runs while small
+configuration and development issues were still being resolved.
+
+***** configuration issues
+- now using SUS running on pinyon, getting some solutions, but not as
+  well (at least within 10 generations) as the normal genprog.  The
+  most recent test resulted in 4/500 10 generation runs succeeding.
+  Some solutions include
+  #+begin_src diff
+    26c26
+    <       movsd   %xmm0, -8(%rbp)
+    ---
+    >       movsd   %xmm0, -16(%rbp)
+    34c34
+    <       movsd   %xmm0, -16(%rbp)
+    ---
+    >       movsd   %xmm0, -8(%rbp)
+  #+end_src
+  and
+  #+begin_src diff
+    20c20
+    <       addq    $8, %rax
+    ---
+    >       addq    $16, %rax
+    28c28
+    <       addq    $16, %rax
+    ---
+    >       addq    $8, %rax
+  #+end_src
+- fixed tournament with size of 2 -- which is way too small
+  - tournament generational selection meaning that when a new
+    generation is built from the previous every individual in the new
+    generation is selected using a tournament.  0/100 trials found a
+    repair
+  - tournament selection of individuals to undergo mutation, but
+    elitist methods for selection when moving from one population to
+    the next -- also 0/100
+***** broken tournament
+all of the following results should be ignored as they used a broken tournament
+- *broken tournament* In the first run, with exactly genprog's GP
+  parameters and operations, and with single-line GP operators only
+  1/100 trials succeeded.  That one did have a surprising solution.
+  #+begin_src diff
+    26c26
+    <       movsd   %xmm0, -8(%rbp)
+    ---
+    >       movsd   %xmm0, -16(%rbp)
+    34c34
+    <       movsd   %xmm0, -16(%rbp)
+    ---
+    >       movsd   %xmm0, -8(%rbp)
+  #+end_src
+- *broken tournament* I'm going to try a run with double the
+  population size, just to see the results, again similar results,
+  just 1/100, and actually found the same fix
+- *broken tournament* then I'll change from single-line mutation
+  operators to up-to-3 line mutations.  I ran this twice operating on
+  sections of size 1-3
+  - 0/100 success
+  - 1/100 success with the following solution
+    #+begin_src diff
+      41a42,43
+      >       leave
+      >       ret
+    #+end_src
+    
+*** method
+    :PROPERTIES:
+    :tangle:   test/gcd
+    :results:  silent
+    :session:  asm-gp
+    :END:
+
+The following steps are tangled to the =test/gcd.clj= script which can
+be run from inside of the =gcd= directory using
+#+begin_src sh :tangle no
+  java -cp ../../../src/clojure/clojure.jar:../../../src/clojure-contrib/clojure-contrib.jar clojure.main ../test/gcd.clj
+#+end_src
+
+1) create the =gcd.s= file
+   #+begin_src sh :tangle no
+     cd gcd
+     gcc -S gcd.c
+   #+end_src
+2) start a slime repl in the =gcd/= directory
+3) load the resulting file and step into the namespace
+   #+begin_src clojure
+     (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+   #+end_src
+4) set the GP parameters
+   #+begin_src clojure
+     (def target-fitness 10)
+     (def max-generations 20)
+     (def population-size 400)
+     (def use-tournament false)
+     (def max-section-size 1)
+     (def good-mult 1)
+     (def bad-mult 5)
+     (def compiler "gcc")
+     (def compiler-flags nil)
+     (def baseline-path "gcd.s")
+     (def good-path-path "good.path")
+     (def bad-path-path "bad.path")
+     (def test-timeout 2000)
+     (def fitness-cache-path
+          (.getPath (f/file-str "~/research/exp/gcd/fitness-cache.clj")))
+     (def test-dir "~/research/code/gcd/")
+     (def test-good "./test-good.sh")
+     (def test-bad "./test-bad.sh")
+   #+end_src
+5) run 500 iterations -- note that =asm-gp-pack= must be in your path
+   #+begin_src clojure
+     (run-experiment
+      (dorun
+       (map  (fn [run]
+               (do
+                 (evolve baseline)
+                 (let [save-dir (str "variants/" (.toString run))]
+                   (s/sh "mkdir" save-dir)
+                   (s/sh "asm-gp-pack" save-dir))))
+             (range 500))))
+   #+end_src
+
+** nullhttpd
+   :PROPERTIES:
+   :tangle:   test/nullhttpd
+   :blog:     t
+   :type:     experiment
+   :END:
+: gcc -pthread -S httpd_comb.c
+: cat httpd_comb.s |wc
+:   6933   18245  127541
+
+The nullhttpd assembly file is almost 7000 lines long.  I take the
+ability of the ASM-GP to find a repair against this large real-life
+bug as a good indicator for the potential viability of an ASM
+representation.
+
+*** results
+9/500 runs found a successful repair with the following parameters
+#+begin_src clojure
+  (def target-fitness 10)
+  (def max-generations 20)
+  (def population-size 40)
+  (def use-tournament false)
+  (def max-section-size 1)
+  (def good-mult 1)
+  (def bad-mult 5)
+  (def good-path-path "good.path")
+  (def bad-path-path "bad.path")
+  ;; let nullhttpd use it's own fitness cache
+  (def fitness-cache-path
+       (.getPath (f/file-str "~/research/nullhttpd/fitness-cache.clj")))
+  (def baseline-path "httpd_comb.s")
+  (def gcc-flags (list "-pthread"))
+  (def test-dir "~/research/nullhttpd/")
+  (def test-good "./my-good-test.sh")
+  (def test-bad "./my-bad-test.sh")
+#+end_src
+
+There was a wide variety of repairs with 7 unique repairs one of which
+was found 3 times.
+#+begin_src diff
+  3719d3718
+  <       movl    $1024, 8(%esp)
+#+end_src
+Some of the other repairs are listed here, although they don't really
+mean anything to me.
+#+begin_src diff
+  2637c2637
+  <       addl    $2624, %eax
+  ---
+  >       movl    -2200(%ebp), %eax
+  4203c4203
+  <       movl    -2200(%ebp), %eax
+  ---
+  >       addl    $2624, %eax
+#+end_src
+#+begin_src diff
+  3642c3642
+  < ReadPOSTData:
+  ---
+  >       jmp     .L404
+  6443c6443
+  <       jmp     .L404
+  ---
+  > ReadPOSTData:
+#+end_src
+#+begin_src diff
+  2011c2011
+  <       call    strncpy
+  ---
+  >       movl    $.LC3, 4(%esp)
+  4172c4172
+  <       movl    $.LC3, 4(%esp)
+  ---
+  >       call    strncpy
+#+end_src
+#+begin_src diff
+  4078a4079
+  >       addl    12(%ebp), %eax
+#+end_src
+
+**** Sorting out validity of solutions
+Although only 9 of the 500 runs found a real repair 15 of the 500 runs
+reportedly an individual as a successful repair.  I believe that these
+6 fake repairs were due to evolved variants which managed to /trick/
+the good or bad test scripts into returning success.  For example
+earlier runs of nullhttpd resulted in variants which would remove the
+index.html file resulting in successful completion of the bad test
+case even though the nullhttpd-exploit hadn't been defeated.
+
+The following table lists the 15 reported solutions and which ones
+after manual inspection did actually defeat the nullhttpd exploit.
+| run | survives nullhttpd-exploit |
+|-----+----------------------------|
+|   5 | yes                        |
+|  58 | yes                        |
+|  64 | yes                        |
+|  67 | no                         |
+|  75 | yes                        |
+|  84 | no                         |
+|  97 | yes                        |
+| 164 | yes                        |
+| 255 | no                         |
+| 267 | no                         |
+| 337 | no                         |
+| 356 | yes                        |
+| 363 | yes                        |
+| 457 | no                         |
+| 497 | yes                        |
+
+A variety of different solutions were found, the starting point of the
+9 successful patches were
+| 2011c2011 |
+| 2637c2637 |
+| 3642c3642 |
+| 3674c3674 |
+| 3719d3718 |
+| 3719d3718 |
+| 3719d3718 |
+| 4078a4079 |
+| 4212d4211 |
+
+*** method
+run the following from inside of =~/research/nullhttpd/=, note that
+the default java stack size had to be increased
+#+begin_src sh :tangle no
+  java -Xss2m -cp ../../src/clojure/clojure.jar:../../src/clojure-contrib/clojure-contrib.jar clojure.main ../code/test/nullhttpd.clj
+#+end_src
+
+1) create the =http_comp.s= file
+   #+begin_src sh :tangle no
+     cd ~/research/nullhttpd/
+     gcc -S httpd_comb.c
+   #+end_src
+2) start up a slime repl in the nullhttpd directory
+3) load up asm-gp
+   #+begin_src clojure
+     (load-file "../code/src/asm-gp.clj")(in-ns 'asm-gp)
+   #+end_src
+4) set the GP parameters
+   #+begin_src clojure
+     (def target-fitness 10)
+     (def max-generations 20)
+     (def population-size 40)
+     (def use-tournament false)
+     (def max-section-size 1)
+     (def good-mult 1)
+     (def bad-mult 5)
+     (def good-path-path "good.path")
+     (def bad-path-path "bad.path")
+     ;; let nullhttpd use it's own fitness cache
+     (def fitness-cache-path
+          (.getPath (f/file-str "~/research/nullhttpd/fitness-cache.clj")))
+     (def baseline-path "httpd_comb.s")
+     (def gcc-flags (list "-pthread"))
+     (def test-dir "~/research/nullhttpd/")
+     (def test-good "./my-good-test.sh")
+     (def test-bad "./my-bad-test.sh")
+   #+end_src
+5) actually perform 500 runs using the =run-experiment= macro to
+   handle setup and cleanup
+   #+begin_src clojure
+     (run-experiment
+      (dorun
+       (map  (fn [run]
+               (message "run %d" run)
+               (evolve baseline)
+               (let [save-dir (str "variants/" (.toString run))]
+                 (s/sh "mkdir" save-dir)
+                 (s/sh "asm-gp-pack" save-dir)))
+             (range 500))))
+   #+end_src
+
+*** good and bad paths
+need to generate (see [[general-path-generation]])
+
+*** new test files
+    :PROPERTIES:
+    :tangle:   no
+    :END:
+saving the next port number in "last-port", and calling =test-good.sh=
+and =test-bad.sh= so that no changes need be made on the clojure side
+of things.
+
+#+begin_src sh
+  #!/bin/sh
+  
+  # read and increment last-port then write it back out
+  n=`cat last-port`
+  if [ $n != 8999 ]; then
+      n=`expr $n + 1`
+  else
+      n="2000"
+  fi
+  echo $n > last-port
+  
+  # file
+  outfile="output-$n"
+  execfile="exec-$n"
+  
+  # run the test
+  rm -f $outfile
+  touch $outfile
+  cp $1 $execfile
+  ./test-good.sh $execfile $outfile $n 2&> /dev/null
+  cat $outfile
+  rm $outfile
+  rm $execfile
+  rm -rf "$execfile-g"
+#+end_src
+** gp operations over real programs
+   :PROPERTIES:
+   :tangle:   collector
+   :END:
+
+just looking at compilation by program, operation, section-size
+
+|            | gcd | sendmail | deroff | nullhttpd | flex |
+|------------+-----+----------+--------+-----------+------|
+| append-asm | 848 |      839 |    850 |       900 |   -1 |
+| delete-asm | 896 |      892 |    870 |       916 |   -1 |
+| swap-asm   | 913 |      962 |    964 |       981 |   -1 |
+
+#+begin_src clojure
+  (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+  
+  (write-obj "compilations.clj"
+             (map
+              (fn [op]
+                (apply list op
+                       (map
+                        #(try
+                          (.size (filter :compile (read-obj (format "results/%s.%s.1.clj" % op))))
+                          (catch Exception e -1))
+                        '("gcd" "s4" "deroff" "nullhttpd" "flex"))))
+              '("append-asm" "delete-asm" "swap-asm")))
+#+end_src
+
+#+begin_src clojure :tangle no
+  (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+  
+  (println (.size (filter :compile (read-obj (second *command-line-args*)))))
+#+end_src
+
+#+begin_src clojure :session asm-gp
+  comps
+#+end_src
+
+#+results:
+
+*** script
+    :PROPERTIES:
+    :tangle:   test/operations
+    :END:
+Going to try to split this up into multiple independent runs through a
+clojure script, because for some reason zsh kept insisting on killing
+off the single large monolithic run.
+
+tangled to the =test/operations.clj= script which can be run using
+#+begin_src sh :tangle no
+  java -Xss256m -Xmx256m -cp ../../../src/clojure/clojure.jar:../../../src/clojure-contrib/clojure-contrib.jar clojure.main ../test/operations.clj 1
+#+end_src
+
+#+begin_src clojure :session asm-gp
+  (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+  (def section-size (try (Integer/parseInt (second *command-line-args*))
+                         (catch Exception e 1)))
+  
+  (doseq [group '(("gcd" "gcd.s" false)
+                  ("deroff" "deroff.s" false)
+                  ("s4" "s4.s" false)
+                  ("nullhttpd" "null.s" true)
+                  ("flex" "flex.s" false))]
+    (let [call-me-by (nth group 0)
+          path (nth group 1)
+          flags (nth group 2)]
+      (def baseline (read-asm path))
+      (if flags
+        (def compiler-flags (list "-pthread"))
+        (def compiler-flags nil))
+      ;; sanity
+      (when (not (compile-asm baseline))
+        (throw (message "%s can't compile at baseline" path)))
+      (doseq [op '(swap-asm delete-asm append-asm)]
+        (message "%s %s %d" path (name op) section-size)
+        (write-obj
+         (format "./results/%s.%s.%d.clj"
+                 call-me-by (name op) section-size)
+         (map #(let [new (cond
+                          (= op 'swap-asm)
+                          (swap-asm baseline section-size)
+                          (= op 'delete-asm)
+                          (delete-asm baseline section-size)
+                          (= op 'append-asm)
+                          (append-asm baseline section-size))]
+                 {:run %
+                  :individual new
+                  :compile (compile-asm new)})
+              (range 1000))))))
+#+end_src
+
+** gp operations
+   :PROPERTIES:
+   :blog:     t
+   :type:     experiment
+   :END:
+Investigating the effectiveness of the GP operations over assembly
+files.
+
+*** results
+The following table show the results of applying each of the three GP
+operations run with single-line asm blocks to the baseline =gcs.s=
+individual 1000 times.
+|                           |    append |    delete |       swap |
+|---------------------------+-----------+-----------+------------|
+| compiled                  |       921 |       926 |        993 |
+| total fitness             |      3049 |      1173 |        655 |
+| fitness=5                 |       598 |       226 |        115 |
+| ave fitness of compilable | 3.3105320 | 1.1812689 | 0.70734341 |
+#+TBLFM: $3=@3/@2::$4=@3/@2::@5$2=@3/@2
+
+As shown nearly all of the variants were successfully compilable,
+however many did have a worse fitness score than the baseline
+individual which had a fitness of 5.
+
+*** effects of section-size
+Increasing to two and three command blocks, so for example delete
+removes two lines from the asm file and swap swaps two two-line
+portions etc... yields the following results
+|               | append1 | append2 | append3 | delete | delete2 | delete3 | swap | swap2 | swap3 |
+|---------------+---------+---------+---------+--------+---------+---------+------+-------+-------|
+| compiled      |     921 |     837 |     769 |    993 |     819 | 749     |  926 |   996 | 995   |
+| total fitness |    3049 |    1902 |    1531 |   1173 |     526 | 465     |  655 |   544 | 456   |
+| fitness=5     |     598 |     366 |     300 |    226 |      94 | 85      |  115 |    93 | 79    |
+
+The only real surprise here is that in terms of compilation swaping
+large sections of code seems to be *much* less disruptive than
+appending or deletion -- which I suppose makes sense if the absolute
+number of commands has some direct effect on compilability.  Notice
+however that despite many more of the swapped variants compiling the
+fitness of the append variants is higher.
+
+*** script
+    :PROPERTIES:
+    :tangle:   test/gp-op
+    :END:
+Going to try to split this up into multiple independent runs through a
+clojure script, because for some reason zsh kept insisting on killing
+off the single large monolithic run.
+
+tangled to the =test/gp-op.clj= script which can be run using
+#+begin_src sh :tangle no
+  java -cp ../../../src/clojure/clojure.jar:../../../src/clojure-contrib/clojure-contrib.jar clojure.main ../test/gp-op.clj
+#+end_src
+
+#+begin_src clojure :session asm-gp
+  (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+  (def target-fitness 10)
+  (def good-mult 1)
+  (def bad-mult 5)
+  (def gcc-flags nil)
+  (def baseline-path "gcd.s")
+  (def good-path-path "good.path")
+  (def bad-path-path "bad.path")
+  (def test-dir "~/research/code/gcd/")
+  (def test-good "./test-good.sh")
+  (def test-bad "./test-bad.sh")
+  (def section-size (Integer/parseInt (second *command-line-args*)))
+  
+  (message "running experiment")
+  (run-experiment
+   (dorun
+    (map
+     (fn [op]
+       (message "%s %d" (name op) section-size)
+       (write-obj
+        (format "./gp-operations/%s.%d.results"
+                (name op) section-size)
+        (pmap #(let [new (cond
+                          (= op 'swap-asm)
+                          (swap-asm baseline section-size)
+                          (= op 'delete-asm)
+                          (delete-asm baseline section-size)
+                          (= op 'append-asm)
+                          (append-asm baseline section-size))]
+                 {:run %
+                  :individual new
+                  :fitness (evaluate-asm new)})
+              (range 1000))))
+     '(swap-asm delete-asm append-asm))))
+#+end_src
+
+** Old GP experiment
+Everything below here is leftover from the initial buggier
+implementation of these operators.
+
+*** functions
+    :PROPERTIES:
+    :tangle:   no
+    :END:
+for each operation, run it 1000 times and see the results of each run.
+each run should return a hash of the following form
+- individual :: the modified individual
+- compile :: true or false
+- fitness :: numerical fitness
+
+**** baseline
+#+begin_src clojure
+  (defn gp-op-test
+    "Test the given GP operation (OP) N times against BASELINE, return a hash
+  of the resulting individuals."
+    [op n baseline]
+    (let [run-test
+          (fn [bin test mult]
+            (* mult
+               (.size
+                (remove #(or (= "" %) (= "Killed" %))
+                        (seq (.split
+                              (s/sh test bin
+                                    :dir (f/file-str test-dir)) "\n"))))))]
+      (pmap #(let [new (op baseline)
+                   bin (compile-asm new)]
+               {:run %
+                :individual new
+                :compile (if bin true false)
+                :fitness (if bin ;; only run the test if it compiled
+                           (+ (run-test bin test-good good-mult)
+                              (run-test bin test-bad bad-mult))
+                           0)})
+            (range n))))
+#+end_src
+
+**** better
+and with the [[better-gp-op]] function
+#+begin_src clojure
+  (defn better-gp-op-test
+    "Test the given GP operation (OP) N times against BASELINE, return a
+  hash of the resulting individuals.  Use the better-gp-op using MODEL
+  for similarity and running each tournament out of M individuals."
+    [op n baseline m model]
+    (let [run-test
+          (fn [bin test mult]
+            (* mult
+               (.size
+                (remove #(or (= "" %) (= "Killed" %))
+                        (seq (.split
+                              (s/sh test bin
+                                    :dir (f/file-str test-dir)) "\n"))))))]
+      (pmap #(let [new (better-gp-op op baseline model m)
+                   bin (compile-asm new)]
+               {:run %
+                :individual new
+                :compile (if bin true false)
+                :fitness (if bin ;; only run the test if it compiled
+                           (+ (run-test bin test-good good-mult)
+                              (run-test bin test-bad bad-mult))
+                           0)})
+            (range n))))
+#+end_src
+*** method
+**** baseline
+     :PROPERTIES:
+     :tangle:   test/gp-operations
+     :results:  silent
+     :session:  asm-gp
+     :END:
+The following steps are tangled to the =test-gp-operations.clj= script
+which can be run using
+#+begin_src sh :tangle no
+  java -cp ../../../src/clojure/clojure.jar:../../../src/clojure-contrib/clojure-contrib.jar clojure.main ../test/gp-operations.clj
+#+end_src
+
+1) create the =gcd.s= file
+   #+begin_src sh :results silent :tangle no
+     gcc -S gcd.c
+   #+end_src
+2) load the resulting file and step into the namespace
+   #+begin_src clojure :session asm-gp
+     (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+   #+end_src
+3) set the GP parameters
+   #+begin_src clojure
+     (def tournament-size 2)
+     (def good-mult 1)
+     (def bad-mult 5)
+     (def gcc-flags nil)
+     (def test-dir "~/research/code/gcd/")
+     (def test-good "./test-good.sh")
+     (def test-bad "./test-bad.sh")
+   #+end_src
+4) function to run the test
+   #+begin_src clojure
+     (defn gp-op-test
+       "Test the given GP operation (OP) N times against BASELINE, return a hash
+     of the resulting individuals."
+       [op n m baseline]
+       (let [run-test
+             (fn [bin test mult]
+               (* mult
+                  (.size
+                   (remove #(or (= "" %) (= "Killed" %))
+                           (seq (.split
+                                 (s/sh test bin
+                                       :dir (f/file-str test-dir)) "\n"))))))]
+         (pmap #(let [new (op baseline m)
+                      bin (compile-asm new)]
+                  {:run %
+                   :individual new
+                   :compile (if bin true false)
+                   :fitness (if bin ;; only run the test if it compiled
+                              (+ (run-test bin test-good good-mult)
+                                 (run-test bin test-bad bad-mult))
+                              0)})
+               (range n))))
+   #+end_src
+5) run each operation 1000 times saving the results to a file
+   #+begin_src clojure
+     (run-experiment
+      (dorun
+       (map
+        (fn [max]
+          (message "swap %d" max)
+          (write-obj (format "./gp-operations/swap.%d.results" max-section-size)
+                     (gp-op-test swap-asm 1000 max baseline))
+          (message "delete %d" max)
+          (write-obj (format "./gp-operations/delete.%d.results" max-section-size)
+                     (gp-op-test delete-asm 1000 max baseline))
+          (message "append %d" max)
+          (write-obj (format "./gp-operations/append.%d.results" max-section-size)
+                     (gp-op-test append-asm 1000 max baseline)))
+        (range 6))))
+   #+end_src
+
+**** better
+     :PROPERTIES:
+     :tangle:   test/better-gp-operations
+     :results:  silent
+     :session:  asm-gp
+     :END:
+The following steps are tangled to the =test-gp-operations.clj= script
+which can be run using
+#+begin_src sh :tangle no
+  java -cp ../../src/clojure/clojure.jar:../../src/clojure-contrib/clojure-contrib.jar clojure.main test/better-gp-operations.clj
+#+end_src
+
+1) create the =gcd.s= file
+   #+begin_src sh :results silent :tangle no
+     gcc -S gcd.c
+   #+end_src
+2) load the resulting file and step into the namespace
+   #+begin_src clojure :session asm-gp
+     (load-file "src/asm-gp.clj")(in-ns 'asm-gp)
+   #+end_src
+3) load up the baseline individual
+   #+begin_src clojure
+     (def baseline (read-asm (f/file-str "~/research/code/gcd.s")))
+   #+end_src
+4) load up the model of command patterns
+   #+begin_src clojure
+     (def model (read-obj "data/c-sample-model"))
+   #+end_src
+5) run each operation 1000 times saving the results to a file
+   #+begin_src clojure
+     (println "mut")
+     (write-obj "./gp-operations/mut.normalized.results"
+                (better-gp-op-test mut-asm 1000 baseline 10 model))
+     (println "swp")
+     (write-obj "./gp-operations/swp.normalized.results"
+                (better-gp-op-test swp-asm 1000 baseline 10 model))
+     (println "del")
+     (write-obj "./gp-operations/del.normalized.results"
+                (better-gp-op-test del-asm 1000 baseline 10 model))
+     (println "inj")
+     (write-obj "./gp-operations/inj.normalized.results"
+                (better-gp-op-test inj-asm 1000 baseline 10 model))
+   #+end_src
+
+*** results
+note that the following were run on early versions of this code base.
+**** diffs
+#+begin_src clojure :session asm-gp
+  (write-asm "/tmp/new" (del-asm baseline))
+#+end_src
+
+#+begin_src sh
+  diff /tmp/new gcd.s
+#+end_src
+
+**** single line GP ops
+     :PROPERTIES:
+     :CUSTOM_ID: single-line-gp-ops
+     :END:
+*NOTE*: all of this data is based on the *single line* versions of the
+GP operations
+
+after 1000 runs of each GP operation
+|     | successful compile | total fitness | graph fitness                |
+|-----+--------------------+---------------+------------------------------|
+| mut |                 48 |           165 | [[file:data/mut-single-fit.png]] |
+| inj |                837 |          3160 | [[file:data/inj-single-fit.png]] |
+| swp |                898 |          1032 | [[file:data/swp-single-fit.png]] |
+| del |                899 |          1977 | [[file:data/del-single-fit.png]] |
+
+This data is saved in =gp-operations= and can be loaded with lines
+like
+#+begin_src clojure :tangle no
+  (def mut (read-obj "./gp-operations/mut.results"))
+#+end_src
+
+**** section base GP
+     :PROPERTIES:
+     :CUSTOM_ID: section-based-gp-ops
+     :END:
+after 1000 runs of each GP operation
+|     | successful compile | total fitness | graph fitness |
+|-----+--------------------+---------------+---------------|
+| mut |                102 |           285 |               |
+| inj |                373 |          1144 |               |
+| swp |                202 |           193 |               |
+| del |                500 |           695 |               |
+
+**** "better" GP ops
+     :PROPERTIES:
+     :CUSTOM_ID: better-gp-ops
+     :END:
+GP ops run with the [[better-gp-op]] pattern profiling command.
+after 1000 runs of each GP operation
+|     | successful compile | total fitness | graph fitness                |
+|-----+--------------------+---------------+------------------------------|
+| mut |                176 |           860 | [[file:data/mut-better-fit.png]] |
+| inj |                112 |           183 | [[file:data/inj-better-fit.png]] |
+| swp |                103 |            88 | [[file:data/swp-better-fit.png]] |
+| del |                871 |          2717 | [[file:data/del-better-fit.png]] |
+
+so it's possible that these changes could also be the result of
+running on a different machine, or running on a slightly later version
+of the code.
+
+**** normalized likely GP ops
+     :PROPERTIES:
+     :CUSTOM_ID: normalized-gp-ops
+     :END:
+after 1000 runs of each GP operation
+|     | successful compile | total fitness | graph fitness |
+|-----+--------------------+---------------+---------------|
+| mut |                 48 |          1020 |               |
+| inj |                 84 |           174 |               |
+| swp |                 87 |           104 |               |
+| del |                291 |           164 |               |
+
+This data is saved in =gp-operations= and can be loaded with lines
+like
+This data is saved in =gp-operations= and can be loaded and inspected
+with lines like...
+#+begin_src clojure :tangle no
+  (def mut (read-obj "./gp-operations/mut.normalized.results"))
+  (.size (filter :compile mut))
+  (reduce + 0 (map :fitness mut))
+#+end_src
+
+**** normalized likely GP with longer patterns not weighted
+just like the above but longer patterns are no longer weighted by the
+square of the pattern length
+
+after 1000 runs of each GP operation
+|     | successful compile | total fitness | graph fitness |
+|-----+--------------------+---------------+---------------|
+| mut |                250 |          1190 |               |
+| inj |                669 |          2739 |               |
+| swp |                192 |            11 |               |
+| del |                409 |             0 |               |
+
+This data is saved in =gp-operations= and can be loaded and inspected
+with lines like...
+#+begin_src clojure :tangle no
+  (def mut (read-obj "./gp-operations/mut.normalized.results"))
+  (.size (filter :compile mut))
+  (reduce + 0 (map :fitness mut))
+#+end_src
+
+** Fitness of Nearby variants
+   :PROPERTIES:
+   :session:  asm-gp
+   :END:
+
+#+begin_src clojure
+  (load-file "src/asm-gp.clj")(in-ns 'asm-gp)
+  (def fixed (read-asm (f/file-str "~/research/code/fixed.s")))
+  (def near-inj
+       (pmap
+        (fn [el] (evaluate (inj-asm fixed)))
+        (range 1000)))
+  (def near-del
+       (pmap
+        (fn [el] (evaluate (del-asm fixed)))
+        (range 1000)))
+  (def near-swp
+       (pmap
+        (fn [el] (evaluate (swp-asm fixed)))
+        (range 1000)))
+  (dorun near-inj)
+  (dorun near-del)
+  (dorun near-swp)
+#+end_src
+
+#+source: near-solution
+#+begin_src clojure
+  (map
+   (fn [n] (list n
+                 (.size (filter #(= % n) near-del))
+                 (.size (filter #(= % n) near-inj))
+                 (.size (filter #(= % n) near-swp))))
+   (range 11))
+#+end_src
+
+#+results: near-solution
+|  0 | 661 | 689 | 840 |
+|  1 |   0 |   1 |   1 |
+|  2 |   0 |   1 |   2 |
+|  3 |   0 |   0 |   0 |
+|  4 |   0 |   2 |   0 |
+|  5 | 227 | 120 | 124 |
+|  6 |  11 |   6 |   7 |
+|  7 |   0 |   2 |   0 |
+|  8 |   0 |   0 |   0 |
+|  9 |   1 |   0 |   0 |
+| 10 | 100 | 179 |  26 |
+
+#+begin_src gnuplot :var data=near-solution
+  set xrange [-1:12]
+  plot data using 1:2 title "del", data using 1:3 title "inj", data using 1:4 title "swp"
+#+end_src
+
+[[file:data/near-solution.png]]
+
+** Simple GP
+The goal here is to get some baseline performance numbers.  This run
+will only use swap (0.25 percent) and crossover (0.25 percent).
+
+*** method
+    :PROPERTIES:
+    :tangle: test/simple-gp
+    :results:  silent
+    :session:  asm-gp
+    :END:
+
+The following steps are tangled to the =test-simple-gp.clj= script
+which can be run using
+#+begin_src sh :tangle no
+  java -cp ../../src/clojure/clojure.jar:../../src/clojure-contrib/clojure-contrib.jar clojure.main test/simple-gp.clj
+#+end_src
+
+1) create the =gcd.s= file
+   #+begin_src sh :tangle no
+     gcc -S gcd.c
+   #+end_src
+2) load the resulting file and step into the namespace
+   #+begin_src clojure
+     (load-file "src/asm-gp.clj")(in-ns 'asm-gp)
+   #+end_src
+3) load up the baseline individual
+   #+begin_src clojure
+     (def baseline (read-asm (f/file-str "~/research/code/gcd.s")))
+   #+end_src
+4) setup the GP parameters
+   #+begin_src clojure
+     (def mut-prob 0.1)
+     (def del-prob 0.1)
+     (def inj-prob 0.1)
+     (def swp-prob 0.1)
+     (def crossover-perc 0.25)
+     (def max-generations 50)
+     (def population-size 100)
+     (def tournament-size 3)
+   #+end_src
+5) run 40 populations
+   #+begin_src clojure
+     (dorun
+      (map  (fn [run]
+              (do
+                (evolve baseline)
+                (let [save-dir (str "variants/" (.toString run))]
+                  (s/sh "mkdir" save-dir)
+                  (s/sh "./pack" save-dir))))
+            (range 100)))
+   #+end_src
+
+*** results
+**** pinyon section-based, swap, inj and crossover
+    :PROPERTIES:
+    :CUSTOM_ID: simple-gp-pinyon-sect-swp-crs
+    :END:
+ran into an "out-of-memory" error after 41 generations -- probably due
+to the cache of fitness values ([[pinyon-section-swp-crs-memory-error]])
+
+run at git commit: basically this was just when everything started
+working well using [[section-based-gp-ops]]
+#+begin_example
+  commit b31500d8f2c68e846daa011971f324ebbdf1d592
+  Author: Eric Schulte <schulte.eric@gmail.com>
+  Date:   Wed Dec 30 13:50:17 2009 -0700
+  
+      only checking STDOUT (not STDERR) of test-*.sh scripts (better fitness scores)
+#+end_example
+
+9/41 or 21.95% of the runs found a solution in under 50 generations.
+
+the distribution of generations-to-solution looks like
+: (3 3 5 11 13 13 21 26 32)
+with the majority of successes occurring in *under* 25 of the 50
+possible generations.
+
+those solutions which were found look to be real working solutions
+#+begin_example 
+  Script started on Fri 01 Jan 2010 04:10:56 PM MST
+  sh-4.0$ gcc -o 9 variants/9/best.s
+  sh-4.0$ ./9 0 55
+  55
+  sh-4.0$ ./9 8767 653
+  1
+  sh-4.0$ ./9 555 666
+  111
+  sh-4.0$ ./9 2 4
+  2
+  sh-4.0$ exit
+  
+  Script done on Fri 01 Jan 2010 04:11:44 PM MST
+#+end_example
+
+***** raw data
+
+each run with the number of generations before solution pulled from
+the following eshell line
+: for i in variants/* {echo $i; ls $i | wc}
+#+results: number-of-generations
+|  0 | 50 |
+|  1 | 50 |
+|  2 | 50 |
+|  3 | 21 |
+|  4 | 50 |
+|  5 | 50 |
+|  6 | 50 |
+|  7 | 50 |
+|  8 | 13 |
+|  9 |  3 |
+| 10 | 50 |
+| 11 | 50 |
+| 12 | 50 |
+| 13 |  5 |
+| 14 | 50 |
+| 15 | 50 |
+| 16 | 50 |
+| 17 | 50 |
+| 18 | 26 |
+| 19 | 50 |
+| 20 | 32 |
+| 21 | 50 |
+| 22 | 50 |
+| 23 | 50 |
+| 24 | 50 |
+| 25 | 50 |
+| 26 | 50 |
+| 27 | 50 |
+| 28 | 13 |
+| 29 | 50 |
+| 30 |  3 |
+| 31 | 50 |
+| 32 | 50 |
+| 33 | 50 |
+| 34 | 50 |
+| 35 | 50 |
+| 36 | 50 |
+| 37 | 50 |
+| 38 | 11 |
+| 39 | 50 |
+| 40 | 50 |
+
+#+begin_src clojure :session asm-gp :var data=number-of-generations
+  (def data data)
+#+end_src
+
+***** error
+      :PROPERTIES:
+      :CUSTOM_ID: pinyon-section-swp-crs-memory-error
+      :END:
+
+#+begin_example
+  generation 38
+  Exception in thread "main" java.lang.RuntimeException: java.lang.RuntimeException: java.util.concurrent.ExecutionException: java.lang.OutOfMemoryError: Java heap space (test-simple-gp.clj:0)
+          at clojure.lang.Compiler.eval(Compiler.java:4658)
+          at clojure.lang.Compiler.load(Compiler.java:4972)
+          at clojure.lang.Compiler.loadFile(Compiler.java:4939)
+          at clojure.main$load_script__7423.invoke(main.clj:211)
+          at clojure.main$script_opt__7460.invoke(main.clj:263)
+          at clojure.main$main__7484.doInvoke(main.clj:338)
+          at clojure.lang.RestFn.invoke(RestFn.java:413)
+          at clojure.lang.Var.invoke(Var.java:359)
+          at clojure.lang.AFn.applyToHelper(AFn.java:173)
+          at clojure.lang.Var.applyTo(Var.java:476)
+          at clojure.main.main(main.java:37)
+  Caused by: java.lang.RuntimeException: java.lang.RuntimeException: java.util.concurrent.ExecutionException: java.lang.OutOfMemoryError: Java heap space
+          at clojure.lang.LazySeq.sval(LazySeq.java:47)
+          at clojure.lang.LazySeq.seq(LazySeq.java:56)
+          at clojure.lang.ChunkedCons.chunkedNext(ChunkedCons.java:59)
+          at clojure.lang.ChunkedCons.next(ChunkedCons.java:43)
+          at clojure.lang.RT.next(RT.java:570)
+          at clojure.core$next__4238.invoke(core.clj:50)
+          at clojure.core$dorun__5263.invoke(core.clj:2098)
+          at asm_gp$eval__163.invoke(test-simple-gp.clj:29)
+          at clojure.lang.Compiler.eval(Compiler.java:4642)
+          ... 10 more
+  Caused by: java.lang.RuntimeException: java.util.concurrent.ExecutionException: java.lang.OutOfMemoryError: Java heap space
+          at clojure.lang.LazySeq.sval(LazySeq.java:47)
+          at clojure.lang.LazySeq.seq(LazySeq.java:56)
+          at clojure.lang.Cons.next(Cons.java:37)
+          at clojure.lang.RT.length(RT.java:1120)
+          at clojure.lang.RT.seqToArray(RT.java:1099)
+          at clojure.lang.LazySeq.toArray(LazySeq.java:126)
+          at clojure.lang.RT.toArray(RT.java:1077)
+          at clojure.core$to_array__4289.invoke(core.clj:257)
+          at clojure.core$sort__5230.invoke(core.clj:1990)
+          at clojure.core$sort_by__5234.invoke(core.clj:2003)
+          at clojure.core$sort_by__5234.invoke(core.clj:2001)
+          at asm_gp$evolve__92.invoke(asm-gp.clj:207)
+          at asm_gp$eval__163$fn__165.invoke(test-simple-gp.clj:25)
+          at clojure.core$map__5071$fn__5073.invoke(core.clj:1776)
+          at clojure.lang.LazySeq.sval(LazySeq.java:42)
+          ... 18 more
+  Caused by: java.util.concurrent.ExecutionException: java.lang.OutOfMemoryError: Java heap space
+          at java.util.concurrent.FutureTask$Sync.innerGet(FutureTask.java:252)
+          at java.util.concurrent.FutureTask.get(FutureTask.java:111)
+          at clojure.core$future_call__7236$fn__7251.invoke(core.clj:4482)
+          at clojure.core.proxy$java.lang.Object$IDeref$Future$2b9be1f9.deref(Unknown Source)
+          at clojure.core$deref__4891.invoke(core.clj:1467)
+          at clojure.core$pmap__7267$step__7276$fn__7278.invoke(core.clj:4517)
+          at clojure.lang.LazySeq.sval(LazySeq.java:42)
+          ... 32 more
+  Caused by: java.lang.OutOfMemoryError: Java heap space
+          at java.util.ArrayList.<init>(ArrayList.java:132)
+          at java.util.ArrayList.<init>(ArrayList.java:139)
+          at clojure.lang.Reflector.getMethods(Reflector.java:312)
+          at clojure.lang.Reflector.invokeNoArgInstanceMember(Reflector.java:263)
+          at clojure.contrib.shell_out$stream_seq__2979$fn__2984.invoke(shell_out.clj:37)
+          at clojure.core$repeatedly__6024$fn__6026.invoke(core.clj:3484)
+          at clojure.lang.LazySeq.sval(LazySeq.java:42)
+          at clojure.lang.LazySeq.seq(LazySeq.java:56)
+          at clojure.lang.RT.seq(RT.java:440)
+          at clojure.core$seq__4254.invoke(core.clj:103)
+          at clojure.core$take_while__5120$fn__5122.invoke(core.clj:1843)
+          at clojure.lang.LazySeq.sval(LazySeq.java:42)
+          at clojure.lang.LazySeq.seq(LazySeq.java:56)
+          at clojure.lang.RT.seq(RT.java:440)
+          at clojure.core$seq__4254.invoke(core.clj:103)
+          at clojure.core$map__5071$fn__5073.invoke(core.clj:1770)
+          at clojure.lang.LazySeq.sval(LazySeq.java:42)
+          at clojure.lang.LazySeq.seq(LazySeq.java:56)
+          at clojure.lang.Cons.next(Cons.java:37)
+          at clojure.lang.RT.next(RT.java:570)
+          at clojure.core$next__4238.invoke(core.clj:50)
+          at clojure.core$str__4340$fn__4344.invoke(core.clj:365)
+          at clojure.core$str__4340.doInvoke(core.clj:367)
+          at clojure.lang.RestFn.applyTo(RestFn.java:144)
+          at clojure.core$apply__4379.invoke(core.clj:434)
+          at clojure.contrib.shell_out$sh__3015$iter__3040__3044$fn__3045$fn__3047.invoke(shell_out.clj:129)
+          at clojure.contrib.shell_out$sh__3015$iter__3040__3044$fn__3045.invoke(shell_out.clj:127)
+          at clojure.lang.LazySeq.sval(LazySeq.java:42)
+          at clojure.lang.LazySeq.seq(LazySeq.java:56)
+          at clojure.lang.RT.seq(RT.java:440)
+          at clojure.lang.RT.nth(RT.java:802)
+          at clojure.contrib.shell_out$sh__3015.doInvoke(shell_out.clj:122)
+#+end_example
+**** pinyon line-based, swap, inj and crossover
+     :PROPERTIES:
+     :CUSTOM_ID: simple-gp-pinyon-line-swp-crs
+     :END:
+single-line GP operations, only using the swap and crossover
+operations, run at git commit
+#+begin_example 
+  commit fd99c4a39b5ed78939dc4949028f1b21ae4bd969
+  Author: Eric Schulte <schulte.eric@gmail.com>
+  Date:   Mon Jan 4 07:47:53 2010 -0700
+  
+      now setup for a GP run with single-line operations
+#+end_example
+
+Success in 28/84 or 1/3 or 33.33% of the runs.
+
+***** raw data
+1) number of generations per try found with
+   : for i in variants/* {echo $i; ls $i |wc}
+2) saved to [[file:data/pinyon.single-line.munge][pinyon.single-line.munge]] then converted with the following
+   macro
+   #+begin_src emacs-lisp
+     (fset 'munge
+        [?\C-s ?/ ?\C-f ?\C-b ?\C-  ?\C-e ?\C-b ?\C-w ?\C-a ?\C-y ?\C-k ?\C-a ?\C-n backspace ?\C-a ?\C-n])
+   #+end_src
+3) imported to the following table with `org-table-import'
+
+#+results: line-based-number-of-generations
+|  0 | 51 |
+|  1 |  2 |
+|  2 |  7 |
+|  3 | 51 |
+|  4 | 51 |
+|  5 | 22 |
+|  6 | 15 |
+|  7 | 51 |
+|  8 | 51 |
+|  9 | 51 |
+| 10 | 27 |
+| 11 | 51 |
+| 12 | 51 |
+| 13 | 51 |
+| 14 | 51 |
+| 15 |  3 |
+| 16 | 51 |
+| 17 | 51 |
+| 18 | 51 |
+| 19 | 51 |
+| 20 | 51 |
+| 21 | 51 |
+| 22 | 45 |
+| 23 | 15 |
+| 24 | 51 |
+| 25 | 37 |
+| 26 | 51 |
+| 27 |  2 |
+| 28 | 51 |
+| 29 | 51 |
+| 30 | 51 |
+| 31 | 51 |
+| 32 | 51 |
+| 33 | 51 |
+| 34 | 51 |
+| 35 | 51 |
+| 36 |  2 |
+| 37 |  7 |
+| 38 | 51 |
+| 39 | 23 |
+| 40 | 51 |
+| 41 | 51 |
+| 42 |  3 |
+| 43 | 51 |
+| 44 | 51 |
+| 45 |  4 |
+| 46 | 51 |
+| 47 | 22 |
+| 48 | 51 |
+| 49 | 18 |
+| 50 | 51 |
+| 51 | 45 |
+| 52 | 51 |
+| 53 | 51 |
+| 54 | 51 |
+| 55 | 51 |
+| 56 | 51 |
+| 57 | 51 |
+| 58 | 51 |
+| 59 | 11 |
+| 60 | 51 |
+| 61 | 32 |
+| 62 |  8 |
+| 63 | 51 |
+| 64 | 51 |
+| 65 | 27 |
+| 66 | 51 |
+| 67 | 15 |
+| 68 |  2 |
+| 69 | 51 |
+| 70 | 51 |
+| 71 | 51 |
+| 72 | 51 |
+| 73 | 51 |
+| 74 | 51 |
+| 75 | 18 |
+| 76 | 14 |
+| 77 | 51 |
+| 78 | 51 |
+| 79 | 51 |
+| 80 | 51 |
+| 81 |  5 |
+| 82 | 51 |
+| 83 |  8 |
+
+#+begin_src clojure :var data=line-based-number-of-generations :session asm-gp
+  (def data data)
+#+end_src
+
+#+results:
+: #'user/data
+
+**** pinyon line-based, inj, del and crossover
+
+** Weighted GP
+*** method
+    :PROPERTIES:
+    :tangle: test/weighted-gp
+    :results:  silent
+    :session:  asm-gp
+    :END:
+
+The following steps are tangled to the =test/weighted-gp.clj= script
+which can be run using
+#+begin_src sh :tangle no
+  java -cp ../../src/clojure/clojure.jar:../../src/clojure-contrib/clojure-contrib.jar clojure.main test/weighted-gp.clj
+#+end_src
+
+1) create the =gcd.s= file
+   #+begin_src sh :tangle no
+     gcc -S gcd.c
+   #+end_src
+2) load the resulting file and step into the namespace
+   #+begin_src clojure
+     (load-file "src/asm-gp.clj")(in-ns 'asm-gp)
+   #+end_src
+3) load up the weighted bad path
+   #+begin_src clojure
+     (def bad-path
+          (reduce
+           (fn [a f] (let [val (get a f 0)]
+                       (if (> val 1)
+                         (assoc a f (dec val))
+                         (dissoc a f))))
+           (reduce (fn [a f] (assoc a f (inc (get a f 0)))) {}
+                   (map #(Integer/parseInt %) (f/read-lines "data/bad.path")))
+           (map #(Integer/parseInt %) (f/read-lines "data/good.path"))))
+   #+end_src
+4) doctor the weighted path -- logarithm and 1D Gaussian smoothing
+   #+begin_src clojure
+     (def bad-path
+          (reduce ;; log of the weights
+           #(assoc %1 (first %2) (m/log (inc (second %2)))) {}
+           ;; 1D Gaussian Smoothing of weights
+           (let [kernel {-3 0.006, -2 0.061, -1 0.242, 0 0.383, 1 0.242, 2 0.061, 3 0.006}]
+             (reduce ;; for each weighted element of the bad-path
+              (fn [accum el]
+                (reduce ;; for each part of the Gaussian kernel
+                 #(let [place (+ (first el) (first %2))]
+                    (assoc %1 place 
+                           (+ (get %1 place 0)
+                              (* (second %2) (second el)))))
+                 accum kernel)) {}
+                 bad-path))))
+   #+end_src
+5) generate a good path
+   #+begin_src clojure :session asm-gp
+     (def good-path
+          (reduce
+           (fn [a f] (let [val (get a f 0)]
+                       (if (> val 1)
+                         (assoc a f (dec val))
+                         (dissoc a f))))
+           (reduce (fn [a f] (assoc a f (inc (get a f 0)))) {}
+                   (map #(Integer/parseInt %) (f/read-lines "data/good.path")))
+           (map #(Integer/parseInt %) (f/read-lines "data/bad.path"))))
+   #+end_src
+6) doctor the good path
+   #+begin_src clojure
+     (def good-path
+          (reduce ;; log of the weights
+           #(assoc %1 (first %2) (m/log (inc (second %2)))) {}
+           ;; 1D Gaussian Smoothing of weights
+           (let [kernel {-3 0.006, -2 0.061, -1 0.242, 0 0.383, 1 0.242, 2 0.061, 3 0.006}]
+             (reduce ;; for each weighted element of the good-path
+              (fn [accum el]
+                (reduce ;; for each part of the Gaussian kernel
+                 #(let [place (+ (first el) (first %2))]
+                    (assoc %1 place 
+                           (+ (get %1 place 0)
+                              (* (second %2) (second el)))))
+                 accum kernel)) {}
+                 good-path))))
+   #+end_src
+7) load up the baseline individual
+   #+begin_src clojure
+     (def baseline
+          (apply-path
+           (apply-path (read-asm "gcd.s")
+                       :good-weight good-path)
+           :bad-weight bad-path))
+   #+end_src
+8) setup the GP parameters
+   #+begin_src clojure
+     (def mut-prob 0.0)
+     (def del-prob 0.0)
+     (def inj-prob 0.25)
+     (def swp-prob 0.0)
+     (def crossover-perc 0.25)
+     (def max-generations 50)
+     (def population-size 100)
+     (def tournament-size 3)
+   #+end_src
+9) run 40 populations
+   #+begin_src clojure
+     (dorun
+      (map  (fn [run]
+              (do
+                (evolve baseline)
+                (let [save-dir (str "variants/" (.toString run))]
+                  (s/sh "mkdir" save-dir)
+                  (s/sh "./pack" save-dir))))
+            (range 100)))
+   #+end_src
+
+*** results
+Succeeded in 51/100 trials, so better than half.
+
+**** raw
+| run | failed? |
+|-----+---------|
+|   0 |       1 |
+|   1 |         |
+|   2 |       1 |
+|   3 |       1 |
+|   4 |         |
+|   5 |         |
+|   6 |       1 |
+|   7 |       1 |
+|   8 |       1 |
+|   9 |       1 |
+|  10 |         |
+|  11 |         |
+|  12 |         |
+|  13 |         |
+|  14 |       1 |
+|  15 |         |
+|  16 |         |
+|  17 |       1 |
+|  18 |       1 |
+|  19 |       1 |
+|  20 |       1 |
+|  21 |       1 |
+|  22 |         |
+|  23 |         |
+|  24 |       1 |
+|  25 |         |
+|  26 |       1 |
+|  27 |         |
+|  28 |         |
+|  29 |         |
+|  30 |       1 |
+|  31 |       1 |
+|  32 |       1 |
+|  33 |       1 |
+|  34 |         |
+|  35 |         |
+|  36 |         |
+|  37 |         |
+|  38 |       1 |
+|  39 |         |
+|  40 |       1 |
+|  41 |         |
+|  42 |       1 |
+|  43 |       1 |
+|  44 |       1 |
+|  45 |         |
+|  46 |         |
+|  47 |       1 |
+|  48 |       1 |
+|  49 |       1 |
+|  50 |         |
+|  51 |         |
+|  52 |       1 |
+|  53 |         |
+|  54 |         |
+|  55 |       1 |
+|  56 |       1 |
+|  57 |         |
+|  58 |         |
+|  59 |       1 |
+|  60 |         |
+|  61 |       1 |
+|  62 |         |
+|  63 |         |
+|  64 |       1 |
+|  65 |         |
+|  66 |         |
+|  67 |       1 |
+|  68 |         |
+|  69 |         |
+|  70 |         |
+|  71 |         |
+|  72 |         |
+|  73 |       1 |
+|  74 |         |
+|  75 |       1 |
+|  76 |         |
+|  77 |         |
+|  78 |       1 |
+|  79 |         |
+|  80 |       1 |
+|  81 |       1 |
+|  82 |         |
+|  83 |       1 |
+|  84 |       1 |
+|  85 |         |
+|  86 |       1 |
+|  87 |       1 |
+|  88 |       1 |
+|  89 |       1 |
+|  90 |         |
+|  91 |       1 |
+|  92 |         |
+|  93 |       1 |
+|  94 |         |
+|  95 |       1 |
+|  96 |         |
+|  97 |       1 |
+|  98 |         |
+|  99 |         |
+|-----+---------|
+|     |      49 |
+#+TBLFM: @102$2=vsum(@2..@-1)
+
+** VU's Challenge
+   - State "STARTED"    from "TODO"       [2010-01-08 Fri 15:43]
+Trying VU's challenge script which genprog is unable to solve.  It's
+just like the gcd.c example only *two* lines of the original C
+source-code need to be changed
+#+begin_src C
+    b=b+1;              //         <=  fix 1: delete this line   
+    printf("%g\n", b);  //         <=  fix 2: insert return 0; to
+#+end_src
+
+This seems to be difficult for genprog because
+1) genprog normally can only solve single-line changes
+2) genprog is unable to distinguish between test-failure due to
+   segfault or infinite-loop (fix 1 above), and the less onerous
+   failures due to incorrect output (fix 2 above)
+
+This will try basically the same method as with weighted-gp stuff, and
+to help solve this problem ASM-GP can now [[diff-between-bad-and-worse][differentiate between bad
+and worse failures]].
+
+This approach was able to solve the above challenge problem in 3/100
+tries, I /think/ that's probably better than the success rate for
+normal genprog.
+
+#+begin_example 
+  $ ls variants
+  0   12  16  2   23  27  30  34  38  41  45  49  52  56  6   63  67  70  74  78  81  85  89  92  96
+  1   13  17  20  24  28  31  35  39  42  46  5   53  57  60  64  68  71  75  79  82  86  9   93  97
+  10  14  18  21  25  29  32  36  4   43  47  50  54  58  61  65  69  72  76  8   83  87  90  94  98
+  11  15  19  22  26  3   33  37  40  44  48  51  55  59  62  66  7   73  77  80  84  88  91  95  99
+  $ find variants -name "best.s"
+  variants/28/best.s
+  variants/70/best.s
+  variants/90/best.s
+  $ 
+#+end_example
+
+*** method
+    :PROPERTIES:
+    :tangle: test/vu-challenge
+    :results:  silent
+    :session:  asm-gp
+    :END:
+
+The following steps are tangled to the =test/vu-challenge.clj= script
+which can be run using
+#+begin_src sh :tangle no
+  java -cp ../../src/clojure/clojure.jar:../../src/clojure-contrib/clojure-contrib.jar clojure.main test/vu-challenge.clj
+#+end_src
+
+1) first compile the program and build the good and bad paths by hand
+   #+begin_src sh :tangle no
+     gcc -S challenge.c
+     gcc -o challenge challenge.s
+     gdb challenge -batch -x data/bad-profile.gdb |clj mem-to-asm.clj challenge.s > data/challenge-bad.path
+     gdb challenge -batch -x data/good-profile.gdb |clj mem-to-asm.clj challenge.s > data/challenge-good.path
+   #+end_src
+2) load up asm-gp and step into the namespace
+   #+begin_src clojure
+     (load-file "src/asm-gp.clj")(in-ns 'asm-gp)
+   #+end_src
+3) load up the weighted bad path
+   #+begin_src clojure
+     (def bad-path
+          (reduce
+           (fn [a f] (let [val (get a f 0)]
+                       (if (> val 1)
+                         (assoc a f (dec val))
+                         (dissoc a f))))
+           (reduce (fn [a f] (assoc a f (inc (get a f 0)))) {}
+                   (map #(Integer/parseInt %) (f/read-lines "data/challenge-bad.path")))
+           (map #(Integer/parseInt %) (f/read-lines "data/challenge-good.path"))))
+   #+end_src
+4) doctor the weighted path -- logarithm and 1D Gaussian smoothing
+   #+begin_src clojure
+     (def bad-path
+          (reduce ;; log of the weights
+           #(assoc %1 (first %2) (m/log (inc (second %2)))) {}
+           ;; 1D Gaussian Smoothing of weights
+           (let [kernel {-3 0.006, -2 0.061, -1 0.242, 0 0.383, 1 0.242, 2 0.061, 3 0.006}]
+             (reduce ;; for each weighted element of the bad-path
+              (fn [accum el]
+                (reduce ;; for each part of the Gaussian kernel
+                 #(let [place (+ (first el) (first %2))]
+                    (assoc %1 place 
+                           (+ (get %1 place 0)
+                              (* (second %2) (second el)))))
+                 accum kernel)) {}
+                 bad-path))))
+   #+end_src
+5) generate a good path
+   #+begin_src clojure :session asm-gp
+     (def good-path
+          (reduce
+           (fn [a f] (let [val (get a f 0)]
+                       (if (> val 1)
+                         (assoc a f (dec val))
+                         (dissoc a f))))
+           (reduce (fn [a f] (assoc a f (inc (get a f 0)))) {}
+                   (map #(Integer/parseInt %) (f/read-lines "data/challenge-good.path")))
+           (map #(Integer/parseInt %) (f/read-lines "data/challenge-bad.path"))))
+   #+end_src
+6) doctor the good path
+   #+begin_src clojure
+     (def good-path
+          (reduce ;; log of the weights
+           #(assoc %1 (first %2) (m/log (inc (second %2)))) {}
+           ;; 1D Gaussian Smoothing of weights
+           (let [kernel {-3 0.006, -2 0.061, -1 0.242, 0 0.383, 1 0.242, 2 0.061, 3 0.006}]
+             (reduce ;; for each weighted element of the good-path
+              (fn [accum el]
+                (reduce ;; for each part of the Gaussian kernel
+                 #(let [place (+ (first el) (first %2))]
+                    (assoc %1 place 
+                           (+ (get %1 place 0)
+                              (* (second %2) (second el)))))
+                 accum kernel)) {}
+                 good-path))))
+   #+end_src
+7) load up the baseline individual
+   #+begin_src clojure
+     (def baseline
+          (apply-path
+           (apply-path (read-asm "challenge.s")
+                       :good-weight good-path)
+           :bad-weight bad-path))
+   #+end_src
+8) setup the GP parameters
+   #+begin_src clojure
+     (def mut-prob 0.0)
+     (def del-prob 0.25)
+     (def inj-prob 0.25)
+     (def swp-prob 0.0)
+     (def crossover-perc 0.25)
+     (def max-generations 50)
+     (def population-size 100)
+     (def tournament-size 3)
+   #+end_src
+9) run 40 populations
+   #+begin_src clojure
+     (dorun
+      (map  (fn [run]
+              (do
+                (evolve baseline)
+                (let [save-dir (str "variants/" (.toString run))]
+                  (s/sh "mkdir" save-dir)
+                  (s/sh "./pack" save-dir))))
+            (range 100)))
+   #+end_src
+*** results
+*** bugs
+running into a null pointer exception, not sure where
+
+#+begin_example
+  generation 0 best-score 5
+  Exception in thread "main" java.lang.RuntimeException: java.lang.RuntimeException: java.lang.RuntimeException: java.util
+  .concurrent.ExecutionException: java.lang.NullPointerException (vu-challenge.clj:0)
+          at clojure.lang.Compiler.eval(Compiler.java:4543)
+          at clojure.lang.Compiler.load(Compiler.java:4857)
+          at clojure.lang.Compiler.loadFile(Compiler.java:4824)
+          at clojure.main$load_script__5833.invoke(main.clj:206)
+          at clojure.main$script_opt__5864.invoke(main.clj:258)
+          at clojure.main$main__5888.doInvoke(main.clj:333)
+          at clojure.lang.RestFn.invoke(RestFn.java:413)
+          at clojure.lang.Var.invoke(Var.java:346)
+#+end_example
+
+* Tasks [15/25]
+** DONE begin tracking more meta-information on individuals
+   - State "DONE"       from "TODO"       [2010-01-29 Fri 12:01]
+   - State "TODO"       from ""           [2010-01-29 Fri 11:05]
+
+interesting things to collect
+- GP operations
+- fitness
+- number of fitness operations
+
+So an individual will look like...
+- :representation :: the representation, the actual lines of code
+- :fitness :: the numerical fitness of the individual, or nil if it is
+     yet to be computed
+- :trials :: number of the total number of fitness trials (global)
+     that have been performed when the individual last had it's
+     fitness determined
+- :operations :: a list of the gp operations applied thus far (or nil
+     for the baseline individual)
+- :compile :: true or false
+
+** DONE add a timeout to the commands used to run tests
+   - State "DONE"       from "TODO"       [2010-01-29 Fri 10:43]
+   - State "TODO"       from ""           [2010-01-29 Fri 10:01]
+Sometimes these commands will hang forever holding up the entire
+machinery of GP.
+
+See this [[http://stackoverflow.com/questions/808276/how-to-add-a-timeout-value-when-using-javas-runtime-exec][stackoverflow-post]] for the java solution, and see the current
+clojure code [[http://github.com/richhickey/clojure-contrib/blob/master/src/main/clojure/clojure/contrib/shell_out.cljhttp://github.com/richhickey/clojure-contrib/blob/master/src/main/clojure/clojure/contrib/shell_out.clj][here:shell_out.clj]].
+
+Ah, there's a much better solution
+#+begin_src clojure
+  (defmacro time-limited [ms & body]
+    `(let [f# (future ~@body)]
+       (.get f# ~ms java.util.concurrent.TimeUnit/MILLISECONDS)))  
+#+end_src
+from [[http://stackoverflow.com/questions/1683680/clojure-with-timeout-macro][stackoverflow:clojure-with-timeout-macro]]
+
+** DONE problems with java bytecode manipulation
+   - State "DONE"       from "TODO"       [2010-01-22 Fri 21:47]
+   - State "TODO"       from ""           [2010-01-22 Fri 20:57]
+
+Sadly the only reasonable fix here is to move from list
+representations to InstructionList representations.
+
+so when I'm inserting new byte-codes into the lists of instructions,
+the instruction targets aren't being updated -- probably because I'm
+not using the built-in insertion function.
+
+Is there a way to automatically update the targets of instructions
+when an instruction changes it's position using .setPositions?
+
+subscribed to bcel-user-subscribe@jakarta.apache.org
+
+*fixed*
+#+begin_src clojure
+  (fitness-asm (let [lst (.copy baseline)
+                     handles (seq (.getInstructionHandles lst))]
+                 (.append lst
+                          (nth handles 14)
+                          (.getInstruction (last handles)))
+                 lst))  
+#+end_src
+
+** TODO java good/bad paths
+   - State "TODO"       from ""           [2010-01-22 Fri 16:08]
+
+** TODO repair something that can't be repaired currently
+   - State "TODO"       from ""           [2010-01-21 Thu 21:21]
+
+something like transposed arguments, wrong type declaration, etc...
+
+** TODO reproduce repairs for the ICSE experiments
+   - State "TODO"       from ""           [2010-01-21 Thu 21:19]
+
+should try all of these
+
+** TODO compare effect of statistical vs. full paths
+   - State "TODO"       from ""           [2010-01-21 Thu 21:06]
+
+#+begin_quote 
+  oprofile is a nice idea. You've sidesteped one implementation
+  bottleneck. However, oprofile is statistical and not
+  deterministic. One experiment you may want to run (or one threat to
+  validity you may want to mention in a paper) is the effect of noisy
+  fault localization on repair success and effort.
+#+end_quote
+
+** DONE manipulating java bytecode
+   - State "DONE"       from "STARTED"    [2010-01-22 Fri 09:10]
+   - State "STARTED"    from "TODO"       [2010-01-22 Fri 08:19]
+   - State "TODO"       from ""           [2010-01-20 Wed 09:20]
+   :PROPERTIES:
+   :blog:     t
+   :type:     task
+   :END:
+
+Changing our GP tools to work with Java [[http://en.wikipedia.org/wiki/Java_bytecode][byte codes]].
+
+We are now able to read, write, and compile java .class files using
+the over-defined asm methods below.
+
+*** Over-defining some ASM functions
+*This code now lives in with the rest of the source code*
+
+so we just need to over-define our read-asm, write-asm, and
+compile-asm functions to work with java.
+#+begin_src clojure
+  (in-ns 'asm-gp)
+  (import '(org.apache.bcel.classfile ClassParser)
+          '(org.apache.bcel.generic ClassGen MethodGen InstructionList))
+#+end_src
+
+introducing a new global variable to hold information needed to write
+new byte-code strings to a .class file.
+#+begin_src clojure
+  (def base-class nil)
+#+end_src
+
+new functions for reading and writing assembly files
+#+begin_src clojure
+  (defn read-asm
+    "Read in a .class file to a list of Byte-code instructions.  For now
+    we'll just be working with the main function." [path]
+    (let [class (new ClassGen (.parse (new ClassParser path)))
+          method (new MethodGen
+                      (second (.getMethods class))
+                      (.getClassName class)
+                      (.getConstantPool class))]
+      (.getInstructionList method)))
+  
+  (defn write-asm
+    "Write a list of Byte-code instructions to a file." [f lst]
+    (if (not base-class)
+      (message "base class is uninitialized!"))
+    (let [cls (new ClassGen base-class)
+          mth (new MethodGen (second (.getMethods cls))
+                   (.getClassName cls)
+                   (.getConstantPool cls))]
+      (.setPositions lst false)
+      (.setInstructionList mth lst)
+      (.setMaxStack mth)
+      (.setMaxLocals mth)
+      (.removeLineNumbers mth)
+      (.replaceMethod cls
+                      (second (.getMethods cls))
+                      (.getMethod mth))
+      (.dump (.getJavaClass cls) f)))
+#+end_src
+
+over-defining all GP operations for InstructionLists
+#+begin_src clojure
+  (defn append-asm
+    "Append an instruction somewhere in this InstructionList.  Not
+    Weighted."
+    ([lst _] (append-asm lst))
+    ([lst]
+       (let [lst (.copy lst)
+             handles (seq (.getInstructionHandles lst))]
+         (try
+          (.append lst
+                   (pick handles)
+                   (.getInstruction (pick handles)))
+          (catch Exception e nil))
+         lst)))
+  
+  (defn delete-asm
+    "Remove an instruction from list InstructionList.  Not Weighted"
+    ([lst _] (delete-asm lst))
+    ([lst]
+       (let [lst (.copy lst)
+             handles (seq (.getInstructionHandles lst))]
+         (try
+          (.delete lst (pick handles))
+          (catch Exception e nil))
+         lst)))
+  
+  (defn swap-asm
+    "Swap two instructions in this InstructionList.  Not Weighted."
+    ([lst _] (swap-asm lst))
+    ([lst]
+       (let [lst (.copy lst)
+             handles (seq (.getInstructionHandles lst))
+             place (rand-int (dec (.size handles)))
+             target (pick handles)]
+         (try
+          (.move lst (nth handles place) target)
+          (.move lst target (nth handles (inc place)))
+          (catch Exception e nil))
+         lst)))
+#+end_src
+
+new fitness and compilation functions
+#+begin_src clojure
+  (defn compile-asm
+    "Compile the asm and return a path to the resulting binary."  [asm]
+    (let [asm-dir (.getPath (File/createTempFile "variant" ""))]
+      (s/sh "rm" asm-dir) (s/sh "mkdir" asm-dir)
+      (try
+       (write-asm (str asm-dir "/" (.getClassName base-class) ".class") asm)
+       asm-dir
+       (catch Exception e nil))))
+#+end_src
+
+Had some serious trouble working with a mutable list of byte-codes,
+which need to be altered by an imperative library, in a functional
+way.  Turns out the problem here was just forgetting that map was
+lazily evaluated -- thanks to =jcromartie= and =lpetit= from
+=#clojure= for helping with this solution.
+#+begin_src clojure :tangle no
+  (defn write-asm [f asm]
+    (let [lst (InstructionList.)
+          cls (new ClassGen base-class)
+          mth (new MethodGen (second (.getMethods cls))
+                   (.getClassName cls)
+                   (.getConstantPool cls))]
+      (doseq [x asm] (.append lst x))
+      (.setPositions lst false)
+      (.replaceMethod cls
+                      (second (.getMethods cls))
+                      (.getMethod mth))
+      (.dump (.getJavaClass cls) f)))
+  
+  (defn list-expand [asm]
+    (with-local-vars [lst (new InstructionList)
+                      cls (new ClassGen base-class)
+                      mth (new MethodGen (second (.getMethods cls))
+                               (.getClassName cls)
+                               (.getConstantPool cls))]
+      (dorun (map #(.append (var-get lst) %) asm))
+      (.setPositions (var-get lst) false)
+      (var-get lst)))
+  
+  
+  
+  
+  
+  (map #(.append lst %) baseline)
+#+end_src
+
+*** Java bytecode manipulation libraries
+http://java-source.net/open-source/bytecode-libraries
+
+After trying a couple tools it looks like bcel is the way to go.
+
+**** bcel
+[[http://jakarta.apache.org/bcel/][bcel]] is another possibility, the following is taken largely from the
+bcel tutorial at [[http://www.moparisthebest.com/smf/index.php?topic=160681.0][moparisthebest]].
+
+installed from svn
+: svn co http://svn.apache.org/repos/asf/jakarta/bcel/trunk/
+then added to my =project.clj= file
+
+#+begin_src clojure
+  (import org.apache.bcel.classfile.ClassParser)
+  (import 'org.apache.bcel.generic ClassGen MethodGen)
+  ;; load up our .class file
+  (def gcd (new ClassGen (.parse (new ClassParser "gcd_java/gcd.class"))))
+  ;; print out the names of all methods
+  (map #(.getName %) (.getMethods gcd))
+  ;; to change the bytes in a method we need a MethodGen for that method.
+  ;; get a methodGen for each method
+  (map #(new MethodGen % (.getClassName gcd) (.getConstantPool gcd)) (.getMethods gcd))
+  ;; get the methodGen for the main method
+  (def main (second (map #(new MethodGen % (.getClassName gcd) (.getConstantPool gcd)) (.getMethods gcd))))
+  ;; get the instruction list for the main method
+  (def instrs (.getInstructionList main))
+  ;; get the handles for this list
+  (def handles (map identity (.getInstructionHandles instrs)))
+  ;; remove an instruction
+  (.delete instrs (nth handles 8))
+  ;; set these instructions back into main
+  (.setInstructionList main instrs)
+  ;; cleanup
+  (.setPositions instrs)
+  (.setMaxStack main)
+  (.setMaxLocals main)
+  (.removeLineNumbers main)
+  ;; replace old main with new main
+  (.replaceMethod gcd (second (.getMethods gcd)) (.getMethod main))
+  ;; write out the .class file
+  (.dump (.getJavaClass gcd) "gcd_java/gcd2.class")
+#+end_src
+
+lets see if we get errors with increasing expansions of the following steps
+- ClassGen -- works
+- Method -- works
+- MethodGen -- works
+- InstructionList -- works
+- Array of Instructions -- works
+
+code for full circle to a clojure list and back
+#+begin_src clojure
+  (def gcd (new ClassGen (.parse (new ClassParser "gcd_java/gcd.class"))))
+  (def main (second (.getMethods gcd)))
+  (def main_gen (new MethodGen main (.getClassName gcd) (.getConstantPool gcd)))
+  (def instrs (.getInstructionList main_gen))
+  (def new_is (new InstructionList))
+  (def inst_lst (map #(.getInstruction %) (.getInstructionHandles instrs)))
+  (def new_inst_lst (concat (take 15 inst_lst) (list (last inst_lst)) (drop 15 inst_lst)))
+  (map #(.append new_is %) new_inst_lst)
+  (.setPositions new_is false)
+  (.setInstructionList main_gen instrs)
+  (.replaceMethod gcd (second (.getMethods gcd)) (.getMethod main_gen))
+  (.dump (.getJavaClass gcd) "gcd_java/gcd.class")
+#+end_src
+
+**** java tools
+Java provides a number of tools for the generation and inspection of
+[[http://en.wikipedia.org/wiki/Java_bytecode][byte codes]].
+- =javac= is the compiler which can be used to turn a java file into
+  compiled binary byte code
+  : javac gcd.java
+  results in the creation of a binary =java.class= file containing the
+  byte-codes
+- =javap= can be used to disassemble the resulting class file
+  : javap -c gcd
+  outputs the following list of the java bytecode instructions
+  #+begin_example 
+    javap -c gcd
+    Compiled from "gcd.java"
+    class gcd extends java.lang.Object{
+    gcd();
+      Code:
+       0:   aload_0
+       1:   invokespecial   #1; //Method java/lang/Object."<init>":()V
+       4:   return
+    
+    public static void main(java.lang.String[]);
+      Code:
+       0:   getstatic       #2; //Field java/lang/System.out:Ljava/io/PrintStream;
+       3:   ldc     #3; //String Hello World!
+       5:   invokevirtual   #4; //Method java/io/PrintStream.println:(Ljava/lang/String;)V
+       8:   return
+    
+    }
+  #+end_example
+  
+now how to get from this pretty printed byte-code output to a loadable
+=.class= file...
+
+**** serp
+[[http://serp.sourceforge.net/][serp]]
+
+**** gnu.bytecode
+Looks like the [[http://www.gnu.org/software/kawa/api/gnu/bytecode/package-summary.html][gnu.bytecode]] library should be helpful here.
+
+I think I've wrestled this library (contained in [[http://www.gnu.org/software/kawa/][kawa]]) into my
+projects dependencies via [[http://github.com/technomancy/leiningen][lein]].
+
+finally able to read in a =.class= file with
+#+begin_src clojure
+  (new gnu.bytecode.ClassFileInput (java.io.FileInputStream. "gcd_java/gcd.class"))
+#+end_src
+** TODO find java bugs in open-source software
+   - State "TODO"       from ""           [2010-01-20 Wed 10:31]
+
+from http://www.linuxjournal.com/article/4860
+#+begin_quote 
+  Examples of free projects using Java include Jakarta from the Apache
+  Foundation (jakarta.apache.org), various XML tools from W3C
+  (www.w3.org) and Freenet (freenet.sourceforge.net). See also the
+  FSF's Java page (www.gnu.org/software/java).
+#+end_quote
+
+** TODO generate diffs of variants
+   - State "TODO"       from ""           [2010-01-19 Tue 10:45]
+they are *much* smaller than the entire individual and would greatly
+decrease storage space for things like the gp-operation results
+
+** DONE general path generation
+   - State "DONE"       from "STARTED"    [2010-01-17 Sun 11:12]
+   - State "STARTED"    from "TODO"       [2010-01-16 Sat 17:12]
+   - State "TODO"       from ""           [2010-01-16 Sat 16:11]
+   :PROPERTIES:
+   :CUSTOM_ID: general-path-generation
+   :blog:     t
+   :type:     task
+   :END:
+The following technique can be used to sample the bad path from "any"
+program running on a linux OS -- for which you have the assembly code.
+It uses [[http://oprofile.sourceforge.net/news/][oprofile]] and is able to associate the memory addresses
+reported by oprofile with lines of assembly files.
+
+alright, so this is working with oprofile.  First oprofile must be
+turned on with something like the following...
+: opcontrol --start
+
+then either the good or bad test-case should be run some number of
+times
+
+then the annotated assembly can be read out with a command like the
+following.
+: opannotate --assembly ../../null
+
+the output of that command looks something like
+#+begin_example
+     1  0.3257 : 804f318:       cmpl   $0x1,-0x10(%ebp)
+     3  0.9772 : 804f31c:       je     804f323 <sgets+0x115>
+               : 804f31e:       negl   -0xc(%ebp)
+               : 804f321:       jmp    804f347 <sgets+0x139>
+               : 804f323:       addl   $0x1,-0xc(%ebp)
+     1  0.3257 : 804f327:       mov    0x8(%ebp),%eax
+               : 804f32a:       movzbl (%eax),%eax
+               : 804f32d:       cmp    $0xa,%al
+     1  0.3257 : 804f32f:       jne    804f337 <sgets+0x129>
+               : 804f331:       addl   $0x1,0x8(%ebp)
+#+end_example
+
+and should be usable for assigning good/bad paths to the assembly file
+
+finally shut down with
+: opcontrol --shutdown
+
+and find out how to clear out the resident information before
+profiling the next path
+
+putting this all together to get some paths
+1) get the mapping from memory addresses to lines in the assembly file
+   : clj ../mem-mapping.clj httpd_comb.s null
+2) stop the daemon
+   : sudo opcontrol --shutdown
+3) clear out old information
+   : sudo opcontrol --reset
+4) start up the daemon
+   : sudo opcontrol --start
+5) run the good test 10 times
+   #+begin_src sh
+     for i in `seq 10`; do
+         j=`expr $i - 1`
+         ./test-good.sh ./null output 401$j
+     done
+   #+end_src
+6) dump the annotations to lines in the assembly file and save the
+   results in good.path
+   : opannotate --assembly null | clj ../opannotate-to-path.clj > good.path
+
+*** better =mem-mapping= to lines of asm
+    :PROPERTIES:
+    :tangle:   mem-mapping
+    :CUSTOM_ID: mem-mapping
+    :END:
+
+this script will disassemble every function in the assembly file, and
+will use GDB to map memory locations to lines in the original
+assembly.  To run it needs the path to the assembly file, and to the
+compiled binary.  The mapping is written to =mapping.clj=.
+: clj mem-mapping.clj httpd_comb.s nullhttpd
+#+source: mem-to-asm
+#+begin_src clojure
+  (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+  
+  (def asm-file (read-asm (second *command-line-args*)))
+  (message "asm file: %s %d lines" (second *command-line-args*) (.size asm-file))
+  (def bin-file (nth *command-line-args* 2))
+  (message "bin-file: %s" bin-file)
+  (def mapping {})
+  
+  (defn function-lines [asm]
+    (filter identity
+            (map #(and (string? %)
+                       (if-let [match (re-matches #"([^\.].+):" %)]
+                         (second match)))
+                 (map :line asm))))
+  (defn gdb-disassemble
+    "Takes the path to a binary, and the name of the symbol to be
+    disassembled."  [path function]
+    (s/sh "gdb" "--batch" (format "--eval-command=disassemble %s" function) path))
+  
+  (dorun
+   (map ;; for every function defined in the file
+    (fn [func]
+      (let [lines (seq (.split (gdb-disassemble bin-file func) "\n"))]
+        ;; step to beginning of function
+        (def pointer 0)
+        (while (not (= (format "%s:" func) (:line (nth asm-file pointer))))
+               (def pointer (inc pointer)))
+        (def pointer (inc pointer))
+        (message "\t%s:%d %d lines" func (dec pointer) (.size lines))
+        (dorun
+         (map ;; build up the mapping of memory address to LOC
+          #(when-let [matches (re-matches #"([\w]+) <[\w]+\+([\d]+)>:.*" %)]
+             ;; step past .L lines which aren't noticed by gdb
+             (while (and (string? (:line (nth asm-file pointer nil)))
+                         (re-matches #"\.L.+" (:line (nth asm-file pointer nil))))
+                    (def pointer (inc pointer)))
+             ;; associate this memory address with this line in the asm-file
+             (def mapping (assoc mapping (nth matches 1) pointer))
+             (def pointer (inc pointer)))
+          lines))))
+    (function-lines asm-file)))
+  
+  (write-obj "mapping.clj" mapping)
+#+end_src
+
+*** =opannotate-to-path=
+    :PROPERTIES:
+    :CUSTOM_ID: opannotate-to-path
+    :tangle:   opannotate-to-path
+    :END:
+Map output from opannotate to a path in the related asm file.  This
+requires the =mapping.clj= written out by [[mem-mapping]], and it accepts
+the output of =opannotate= through a pipe.
+
+#+begin_src clojure
+  (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+  
+  (def mapping (read-obj "mapping.clj"))
+  
+  (while-let
+   [line (read-line)]
+   ;;     10 27.7778 : 804ba03:
+   (when-let [match (re-matches #"[\s]+([\d]+)[\s]+([\.\d]+) : ([\w]+):.*" line)]
+     (dorun
+      (map
+       (fn [_] (if-let [line (mapping (format "0x0000000000%s" (nth match 3)))]
+                 (println line)))
+       (range (Integer/parseInt (nth match 1)))))))
+#+end_src
+
+*** using gdb to attach to a running process
+with something like
+: gdb program-path program-id
+
+then run a series of =step= commands dumping the output to a file
+
+*** oprofile
+try using [[http://oprofile.sourceforge.net/]]
+
+*** IRC help from #gdb
+#+begin_quote
+15:46 <_schulte_> I'd think that there would be a general utility
+                  for sampling the program counter of a running
+                  program, but I've not been able to find anything
+15:47 <jankratochvil> _schulte_: Sampling for which purpose? For
+                      profiling purposes it is done by gcc -pg &
+                      gprof, currently superseded by oprofile.
+15:48 <jankratochvil> For GDB-script programming see: $ info
+                      '(gdb)Command Files'
+15:48 <_schulte_> jankratochvil: I need to find out which lines of
+                  an assembly file are being executed, and with
+                  what frequency
+15:49 <jankratochvil> For python programming: $ info '(gdb)Python'
+15:49 <_schulte_> if I can just get the contents of the program
+                  counter then I can use that to get the related
+                  lines in the .s file
+15:49 <jankratochvil> _schulte_: So maybe gcov but I do not have
+                      experience with it myself.
+15:50 <_schulte_> jankratochvil: thanks, so far everything I've
+                  looked into works over C files, and need to be
+                  able to instrument the generated assembly --
+                  which isn't possible in my case
+15:51 <jankratochvil> These tools generally just insert some call
+                      into prologue and epilogue so you can insert
+                      it there yourself to catch the point when
+                      execution enters your function.  See `gcc -S'
+                      output for these called instrumentation
+                      functions.
+15:53 <_schulte_> jankratochvil: alright, that sounds promising,
+                  I'll give it a try. thanks
+15:54 <jankratochvil> np, perusing these instrumentation gcc calls
+                      can be useful. :-)
+16:01 <_schulte_> it looks like I can also attach to a running
+                  program, and then use step/stepi to inspect the
+                  state.  maybe wrapping that in a shell script
+                  which I could repeatedly call would be
+                  sufficient...
+16:09 <jankratochvil> _schulte_: If you do not need to catch _each_
+                      entry and you want just some statistical
+                      sample then you want oprofile.  Or you can
+                      implement it yourself by fast setitimer()
+                      handler saving the - probably caller's caller
+                      - PC each time.
+16:10 <jankratochvil> oprofile - contrary to gprof - does not need
+                      any instrumentation and DWARF debug info is
+                      enough for it.
+16:10 <_schulte_> jankratochvil: that sounds perfect, thanks!
+#+end_quote
+
+** DONE better caching
+   - State "DONE"       from "TODO"       [2010-01-15 Fri 15:36]
+   - State "TODO"       from ""           [2010-01-15 Fri 15:25]
+   :PROPERTIES:
+   :tangle:   no
+   :END:
+
+Better consistent hashing
+- hash fitness by sha1 of individual rather than full asm
+  
+  this can be accomplished using Java's =.hashCode= method directly on
+  an individual
+  #+begin_src clojure
+    (.hashCode basline)
+  #+end_src
+  
+- persist fitness hash on disk between runs, can be accomplished by
+  explicitly loading and saving the fitness-cache from a specified
+  location, lets say... "~/research/code/data/fitness-cache.clj"
+
+** TODO expand some big programs
+see how the asm scales with the size of the C program
+
+** TODO more literature review
+   - State "TODO"       from ""           [2010-01-13 Wed 09:23]
+- [[file:data/ksplice.pdf][ksplice.pdf]] look in the references of this paper (skim notes)
+
+** DONE differentiate between bad and worse failures
+   - State "DONE"       from "TODO"       [2010-01-11 Mon 00:24]
+   - State "TODO"       from ""           [2010-01-08 Fri 16:03]
+   :PROPERTIES:
+   :blog:     t
+   :type:     task
+   :CUSTOM_ID: diff-between-bad-and-worse
+   :END:
+So this is inspired fairly directly by VU's challenge script, which
+takes advantage of the fact that our current system can't
+differentiate between failing a test by returning the wrong result --
+(e.g. printing 56 instead of 55) and failing a test for more serious
+reasons like throwing a segfault or entering an infinite loop.
+
+Here we'll try assigning test results in a less dramatic fashion,
+basically we'll give 1 point for passing the test, 0 points for a
+non-0 exit (either segfault or infinite loop), and a new gradation of
+0.5 points just for exiting cleanly.  While it would be possibly to do
+much more like assigning fitness based on running time this seems just
+fine for now.
+
+*** implementation
+The =time= command looks like it will be sufficient.
+
+changing test-bad.sh from
+#+begin_src sh
+  #!/bin/sh
+  ulimit -t 1
+  $1 0 55 2> /dev/null | diff output.0.55 - &> /dev/null && (echo "0 55")
+  exit 0
+#+end_src
+to
+#+begin_src sh
+  #!/bin/sh
+  ulimit -t 1
+  time $1 0 55 2> /dev/null | diff output.0.55 - &> /dev/null && (echo "0 55")
+  exit 0
+#+end_src
+
+will print the time taken to run the command to STDERR, so for example
+the output of a working gcd will be
+#+begin_example 
+real    0m0.006s
+user    0m0.004s
+sys     0m0.004s  
+#+end_example
+and the output of a broken infinite-loop gcd will be
+#+begin_src 
+real    0m0.998s
+user    0m1.004s
+sys     0m0.000s
+#+end_src
+so it should be fairly easy to catch this STDERR output in clojure and
+use it to adjust the score of the resulting scripts.
+
+#+begin_src clojure :session asm-gp
+  (let [out (s/sh test bin :return-map true)
+        user (re-matches #"user\t(\d+)m([\d\.]+)s"
+                         (nth (.split (:err out) "\n") 2))
+        user-time (+ (* 60 (Double/parseDouble (second user)))
+                     (Double/parseDouble (nth user 2)))
+        clean-exit (and (< user-time 0.9) (= 0 (:exit out)))
+        lines (.size (remove #(= "" %)
+                       (seq (.split (out :out) "\n"))))]
+    (if (> lines 0) lines (if clean-exit 0.5 0)))
+#+end_src
+
+** DONE find a good set of training c/asm source code
+   - State "DONE"       from "DONE"       [2010-01-03 Sun 12:00]
+   :PROPERTIES:
+   :blog: t
+   :type:     task
+   :END:
+I collected 34 short C programs from [[http://rosettacode.org/wiki/Category:C][rosettacode]].  These programs were
+selected for their simple subject matter (mainly mathematical or array
+sorting) and their lack of any dependencies aside from standard
+libraries.  These programs are contained in [[file:data/c-samples.2010-01-03.34-working.tar.bz2][c-samples.tar.bz2]].
+
+These 22 programs can be compiled to assembly files using the
+following
+#+begin_src clojure
+  (def dir (.getPath (file-str "~/Desktop/c-samples")))
+  (def source-basenames
+       (filter identity (map #(second (re-matches #"(.*)\.c" %))
+                             (.list (new File dir)))))
+  ;; compile
+  (map (fn [path] (s/sh "gcc" "-o"
+                        path
+                        (format "%s.c" path)
+                        :dir (f/file-str dir))) source-basenames)
+  
+  (comment ;; to train against these sources
+    (train (map read-asm sources) 4)
+    )  
+#+end_src
+
+** DONE find a "bad path" -- profiling assembly files
+   - State "DONE"       from "DONE"       [2010-01-06 Wed 12:00]
+   :PROPERTIES:
+   :blog:     t
+   :type:     task
+   :END:
+genprog makes good use of "good paths" and "bad paths" to see which
+portions of a source-code files are run during both the good and bad
+tests.  This information is used to focus on the mutation of
+source-code files towards those lines involved in failing the bad
+test.
+
+This work will benefit from the ability to find which lines of an
+assembly file are used during execution of each test.  Luckily gdb
+makes this task relatively simple -- as long as the lines in question
+are contained inside of a named function (for example =main=).
+
+see
+- [[gdb-script]] for a script which runs a file and returns the value of
+  the program counter after each step of assembly execution
+- [[mem-to-asm]] for a clojure script which takes the path to the asm file
+  and can accept the output of [[gdb-script]] through a pipe and spits out
+  the loc in the assembly file related to the program counter sampled
+  by gdb
+
+*** GDB-script
+    :PROPERTIES:
+    :CUSTOM_ID: gdb-script
+    :END:
+Writing a simple gdb script [[file:data/asm-profile.gdb][asm-profile.gdb]] which can be run with
+: gdb gcd -batch -x data/asm-profile.gdb |grep -e "in main ()" > output
+
+it looks like
+#+begin_example 
+  disassemble main
+  break main
+  run 0 55
+  stepi
+  stepi
+  stepi
+  ...
+#+end_example
+
+piped through this [[mem-to-asm][little clojure script]] to extract the addresses
+: gdb -batch gcd -x data/asm-profile.gdb |clj mem-to-asm.clj
+
+associates memory addresses with the assembly codes following =main=
+in the assembly source-code file.
+
+*** mem-to-asm
+     :PROPERTIES:
+     :tangle:   mem-to-asm
+     :CUSTOM_ID: mem-to-asm
+     :END:
+
+When called on the command line using a line such as
+: gdb -batch gcd -x data/asm-profile.gdb |clj mem-to-asm.clj gcd.s
+this script will
+1) read in the asm file (in this case =gcd.s=)
+2) read the output from gdb disassemble and use it to associate memory
+   addresses with loc in the asm file
+3) read the values of the program-counter output by gdb and translate
+   them on the fly to loc in the assembly file which are printed to
+   STDOUT
+
+#+begin_src clojure
+  (load-file "src/asm-gp.clj")(in-ns 'asm-gp)
+  
+  (def asm-file (read-asm (second *command-line-args*)))
+  
+  (def pointer 0)
+  
+  (while (not (= "main:" (:line (nth asm-file pointer))))
+         (def pointer (inc pointer)))
+  (def pointer (inc pointer))
+  
+  (def mapping {})
+  
+  (while-let
+   [line (read-line)]
+   ;; build up the mapping
+   (when-let [matches (re-matches #"([\w]+) <main\+([\d]+)>:.*" line)]
+     ;; step past .L lines which aren't noticed by gdb
+     (while (and (string? (nth asm-file pointer))
+                 (re-matches #"\.L.+" (nth asm-file pointer)))
+            (def pointer (inc pointer)))
+     ;; associate this memory address with this line in the asm-file
+     (def mapping (assoc mapping (nth matches 1) pointer))
+     (def pointer (inc pointer)))
+   ;; apply the mapping
+   (when-let [hex (second (re-matches #"([\w]+) in main \(\)" line))]
+     (println (mapping hex))))
+#+end_src
+
+*** reference
+sources
+- [[http://en.wikipedia.org/wiki/X86_assembly_language#Using_the_instruction_pointer_register][using-the-instruction-pointer]]
+- [[wiki:Instruction_pointer]]
+- the GDB api
+- look on #gdb irc channel and ask for help
+- here's a [[http://rosettacode.org/wiki/Print_a_Stack_Trace#C][stack trace in C]]
+
+some useful gdb instructions include
+- =display/i $pc= which will print the next line of assembly after
+  each step
+- =stepi= which steps at the instruction level
+- =info registers= which prints the contents of the registers
+- =disassemble main= which prints the assembly for a function -- in
+  this case =main=
+
+there is a good gdb tutorial at [[http://www.linuxjournal.com/article/7876][linuxjournal:emacs-and-gdb]], or with a
+focus on assembly see [[http://www.unknownroad.com/rtfm/gdbtut/gdbadvanced.html][gdbadvanced]]
+
+I should really grow up and write a C program which uses [[http://www.cs.utah.edu/dept/old/texinfo/libgdb/libgdb.html][libgdb]]
+
+*** close look at output
+thought maybe there was a way to find a constant mapping between the
+offset number in the gdb output, and the command, but there are times
+when the same command pattern takes up different amounts of offset
+
+This table tries to map commands to the amount of offset they absorb
+in memory (reported by gdb disassemble), as far as I can tell there is
+not an easy consistent mapping.
+| push        | 1 |
+| mov         | 2 |
+| and         | 3 |
+| sub         | 3 |
+| mov 0xc()   | 3 |
+| add         | 3 |
+| mov , ()    | 2 |
+| call        | 5 |
+| mov , 0xc() | 4 |
+| fild 0xc    | 4 |
+| fstp 0xc    | 4 |
+| mov ()      | 2 |
+| mov , ()    | 3 |
+
+#+results: gdb-disassemble-output
+|   0 | push    |
+|   1 | mov     |
+|   3 | and     |
+|   6 | sub     |
+|   9 | mov     |
+|  12 | add     |
+|  15 | mov     |
+|  17 | mov     |
+|  20 | call    |
+|  25 | mov     |
+|  29 | fildl   |
+|  33 | fstpl   |
+|  37 | mov     |
+|  40 | add     |
+|  43 | mov     |
+|  45 | mov     |
+|  48 | call    |
+|  53 | mov     |
+|  57 | fildl   |
+|  61 | fstpl   |
+|  65 | fldl    |
+|  69 | fldz    |
+|  71 | fxch    |
+|  73 | fucompp |
+|  75 | fnstsw  |
+|  77 | sahf    |
+|  78 | jne     |
+|  80 | jp      |
+|  82 | fldl    |
+|  86 | fstpl   |
+|  90 | movl    |
+|  97 | call    |
+| 102 | jmp     |
+| 104 | fldl    |
+| 108 | fldl    |
+| 112 | fxch    |
+| 114 | fucompp |
+| 116 | fnstsw  |
+| 118 | sahf    |
+| 119 | seta    |
+| 122 | test    |
+| 124 | je      |
+| 126 | fldl    |
+| 130 | fsubl   |
+| 134 | fstpl   |
+| 138 | jmp     |
+| 140 | fldl    |
+| 144 | fsubl   |
+| 148 | fstpl   |
+| 152 | fldl    |
+| 156 | fldz    |
+| 158 | fxch    |
+| 160 | fucompp |
+| 162 | fnstsw  |
+| 164 | sahf    |
+| 165 | jne     |
+| 167 | jp      |
+| 169 | fldl    |
+| 173 | fstpl   |
+| 177 | movl    |
+| 184 | call    |
+| 189 | mov     |
+| 194 | leave   |
+| 195 | ret     |
+|     |         |
+
+#+begin_src clojure :session asm-gp :var gdb=gdb-disassemble-output
+  (def gdb gdb)  
+#+end_src
+
+** DONE effectively use good and bad paths
+   - State "DONE"       from "DONE"       [2010-01-07 Thu 12:00]
+   :PROPERTIES:
+   :tangle:   no
+   :session:  asm-gp
+   :blog:     t
+   :type:     task
+   :END:
+
+1) first we need to generate the good and bad paths
+
+   A different command for each reflecting different good and bad
+   arguments to the gcd executable.
+   #+begin_src sh
+     gdb -batch gcd -x data/good-profile.gdb |clj mem-to-asm.clj gcd.s > good.path
+   #+end_src
+   and
+   #+begin_src sh
+     gdb -batch gcd -x data/bad-profile.gdb |clj mem-to-asm.clj gcd.s > bad.path
+   #+end_src
+
+2) then we can take the bad-path subtract the good-path, and that
+   should provide a good indication of where the GP should focus.
+   #+begin_src clojure
+     (def bad-path
+          (reduce
+           (fn [a f] (let [val (get a f 0)]
+                       (if (> val 1)
+                         (assoc a f (dec val))
+                         (dissoc a f))))
+           (reduce (fn [a f] (assoc a f (inc (get a f 0)))) {}
+                   (map #(Integer/parseInt %) (f/read-lines "data/bad.path")))
+           (map #(Integer/parseInt %) (f/read-lines "data/good.path"))))
+   #+end_src
+   
+3) Then we apply this path to our baseline individual.  See [[apply-path]]
+   #+begin_src clojure
+     (def baseline (apply-path (read-asm "gcd.s") :bad-weight bad-path))
+   #+end_src
+
+for the experiment run using this setup see [[weighted-gp]]
+
+** DONE doctor bad paths
+   - State "DONE"       from "DONE"       [2010-01-08 Fri 12:37]
+   :PROPERTIES:
+   :blog:     t
+   :type:     task
+   :END:
+As it turns out a strict bad path on the assembly instruction level
+can be too narrow.  For example on the gcd.s code the bad path limits
+the GP operations to the lines following =.L6:= -- namely the code
+implementing the infinite loop
+
+#+begin_src asm
+  .L8:
+          fldl    64(%esp)
+          fstpl   4(%esp)
+          movl    $.LC1, (%esp)
+          call    printf
+          jmp     .L4
+  .L6:
+          fldl    72(%esp)
+          fldl    64(%esp)
+          fxch    %st(1)
+          fucompp
+          fnstsw  %ax
+#+end_src
+
+however the solution needed to fix gcd.s is to replace the line
+immediately preceding =.L6= to return *before* entering the infinite
+loop.
+
+to resolve this issue I'm going to try two things
+1) I'll apply the log of the bad-path program counters rather than the
+   actual number -- which is often in the thousands make weighted
+   selection of non-bad-path lines of code practically impossible
+   #+begin_src clojure
+     (apply hash-map
+            (apply concat
+                   (map #(list (first %)
+                               (m/log (inc (second %)))) bad-path)))
+   #+end_src
+
+2) I'll smooth out the weight so that the weight of a line is
+   influenced by the weights of it's neighbors, lets say something
+   like
+   | 6% | 24% | 38% | 24% | 6% |
+   #+begin_src clojure
+     (let [kernel {-3 0.006, -2 0.061, -1 0.242, 0 0.383, 1 0.242, 2 0.061, 3 0.006}]
+       (reduce ;; for each weighted element of the bad-path
+        (fn [accum el]
+          (reduce ;; for each part of the kernel
+           #(let [place (+ (first el) (first %2))]
+              (assoc %1 place 
+                     (+ (get %1 place 0)
+                        (* (second %2) (second el)))))
+           accum kernel))
+        {} bad-path))
+   #+end_src
+
+doctoring has the following effect on the weights of the bad path
+#+source: bad-path
+#+begin_src clojure :session asm-gp :exports none
+  (map #(apply list %) bad-path)
+#+end_src
+#+begin_src gnuplot :var data=doctored-good-path :exports none :file data/doctored-good-path.png
+  set xrange [0:79]
+  plot data using 1:2 with boxes notitle
+#+end_src
+
+| before                 | after                           |
+|------------------------+---------------------------------|
+| [[file:data/bad-path.png]] | [[file:data/bad-path-doctored.png]] |
+
+** DONE use a "good" path
+   - State "DONE"       from "TODO"       [2010-01-08 Fri 13:30]
+   - State "TODO"       from ""           [2010-01-08 Fri 12:38]
+   :PROPERTIES:
+   :blog:     t
+   :type:     task
+   :END:
+
+Same idea as the bad path, only using a good path to aid in selection
+of replacement code.
+
+1) The following can be used to find the good path.
+   #+begin_src clojure :session asm-gp
+     (def good-path
+          (reduce
+           (fn [a f] (let [val (get a f 0)]
+                       (if (> val 1)
+                         (assoc a f (dec val))
+                         (dissoc a f))))
+           (reduce (fn [a f] (assoc a f (inc (get a f 0)))) {}
+                   (map #(Integer/parseInt %) (f/read-lines "data/good.path")))
+           (map #(Integer/parseInt %) (f/read-lines "data/bad.path"))))
+   #+end_src
+
+2) then to doctor the good path
+   #+begin_src clojure
+     (def good-path
+          (reduce ;; log of the weights
+           #(assoc %1 (first %2) (m/log (inc (second %2)))) {}
+           ;; 1D Gaussian Smoothing of weights
+           (let [kernel {-3 0.006, -2 0.061, -1 0.242, 0 0.383, 1 0.242, 2 0.061, 3 0.006}]
+             (reduce ;; for each weighted element of the good-path
+              (fn [accum el]
+                (reduce ;; for each part of the Gaussian kernel
+                 #(let [place (+ (first el) (first %2))]
+                    (assoc %1 place 
+                           (+ (get %1 place 0)
+                              (* (second %2) (second el)))))
+                 accum kernel)) {}
+                 good-path))))
+   #+end_src
+   
+   resulting in the following change
+   | before                  | after                            |
+   |-------------------------+----------------------------------|
+   | [[file:data/good-path.png]] | [[file:data/doctored-good-path.png]] |
+
+3) Then to adjust our GP functions so that they take account of the
+   good and bad weights... done
+
+4) Then generate a baseline with both good and bad path info
+   #+begin_src clojure
+     (def baseline
+          (apply-path
+           (apply-path (read-asm "gcd.s")
+                       :good-weight good-path)
+           :bad-weight bad-path))
+   #+end_src
+
+After four quick runs the GP was able to find a solution in *all four
+runs*, which is a drastic improvement over all previous attempts.  I
+guess it remains to be seen how well this improvement transfers to
+other programs but it is encouraging.
+
+** STARTED bias GP operations towards common command patterns
+   - State "STARTED"    from "DONE"       [2010-01-01 Fri 12:00]
+   :PROPERTIES:
+   :exports:  code
+   :CUSTOM_ID: r-source-cmd-model
+   :blog:     t
+   :type:     task
+   :END:
+
+1) first build a model of the command patterns in *.s files (see
+   [[r-source-cmd-model]])
+2) write a function which uses a model to run the products of GP
+   operations through tournaments (see [[better-gp-op]]) which seems to
+   work with lines like
+   #+begin_src clojure
+     (better-gp-op del-asm baseline full-model 9)
+   #+end_src
+
+For some reason this doesn't really seem to help.
+   
+*** code -- ASM command pattern profiles
+Learning what patterns of commands are actually used in assembly files
+which are generated from C source code.
+**** generalize commands into groups
+#+begin_src clojure
+  (defn generalize-cmd [cmd]
+    "Map a command into a more general command class."
+    (cond
+     ;; jump targets
+     (and (string? cmd) (re-matches #"^\.L(\d+):" cmd))
+     ".L"
+     (and (string? cmd) (re-matches #"^\.LC(\d+):" cmd))
+     ".LC"
+     (and (string? cmd) (re-matches #"^\.LFB(\d+):" cmd))
+     ".LFB"
+     (and (string? cmd) (re-matches #"^\.LFE(\d+):" cmd))
+     ".LFE"
+     ;; globals
+     (and (string? cmd) (re-matches #"^\.globl.*" cmd))
+     ".globl"
+     (and (string? cmd) (re-matches #"^(.+):$" cmd))
+     (second (re-matches #"^(.+):$" cmd))
+     ;; regular asm commands w/o arguments
+     (and (string? cmd) (re-matches #"^\t(.+)$" cmd))
+     (second (re-matches #"^\t(\S+).*$" cmd))
+     ;; regular asm commands w/arguments
+     (coll? cmd) (first cmd)))
+#+end_src
+
+**** pull patterns out of a collection of commands
+#+begin_src clojure
+  (defn patterns
+    "Return the patterns in coll of length size or less along with their
+    frequencies." [coll size]
+    (reduce
+     (fn [model f] (assoc model f (inc (get model f 0))))
+     {}
+     ((fn [coll size accum]
+       (if (> size 0)
+         (recur
+          coll
+          (- size 1)
+          (concat
+           (apply map list
+                  ((fn [coll size accum]
+                     (if (> size 0)
+                       (recur coll (- size 1) (cons (drop size coll) accum))
+                       (cons coll accum))) coll (- size 1) '()))
+           accum))
+         accum)) coll size '())))
+#+end_src
+
+**** compile a model of these command groups and their frequencies
+#+begin_src clojure
+  (defn train [asms window-size]
+  (reduce
+   (fn [model map] (merge-with + model map))
+   {} (map #(patterns (map generalize-cmd %) window-size) asms)))
+#+end_src
+
+**** model-similarity
+Compare two models of cmd patterns returning an integer which is
+proportional to the "similarity" in command patterns between the
+models.
+#+begin_src clojure
+  (defn model-similarity
+    "Return the similarity between two models of cmd patterns." [a b]
+    ;; ensure both are cast as hash-maps
+    (reduce #(+ %1 (or (b (first %2)) 0)) 0 a))
+#+end_src
+
+now with the "times length squared" portion removed
+
+**** better-gp-op
+    :PROPERTIES:
+    :CUSTOM_ID: better-gp-op
+    :END:
+
+Run the supplied GP operation =tournament-size= times and select the
+tournament winner as the variant with the highest pattern similarity
+rating.
+#+begin_src clojure  
+  (defn better-gp-op
+    "Run the supplied GP operation =tournament-size= times and select
+  the tournament winner as the variant with the highest pattern
+  similarity rating."
+    [op asm model tournament-size]
+    (let [options (map (fn [n] (op asm)) (range tournament-size))]
+      (first (last
+              (sort-by second
+                       (map #(list % (model-similarity
+                                      (train (list %) 4)
+                                      model)) options))))))
+#+end_src
+
+*** source code for the R stat project
+
+1) first compiled the .c files
+   #+begin_src sh
+     find src -type f -name "*.c" -exec gcc -S {} \;
+   #+end_src
+2) then copied the big ones to a boilerplate directory
+   #+begin_src ruby :var data=r-big-s-files
+     data.each{|f| system "cp #{f[0]} ~/research/code/boilerplate/" }
+   #+end_src
+3) trained a model against these files
+   #+begin_src clojure
+     (def sources (filter #(re-matches #".*\.s" %) (.list (new File dir))))
+     (def sources (map (fn [path] (.getPath (new File dir path))) sources))
+     (def model (train (map read-asm sources) 4))
+   #+end_src
+4) filtered the model down to only those patterns which were more than
+   1 command line and appeared more than 8 times
+   #+begin_src clojure
+     (def model (filter #(< 1 (.size (first %))) model))
+     (def model (filter #(< 8 (second %)) model))
+   #+end_src
+5) save this model to a file
+   #+begin_src clojure
+     (write-obj "data/model" model)
+   #+end_src
+
+*** random small math scripts
+in =data/boilerplate.2010-01-01.tar.bz2=
+
+so I've collected 5 simple math programs written in C in the
+=boilerplate= directory totaling 114 lines of code (including
+comments).
+: for i in boilerplate/*.c {cat $i |wc}
+
+|  12 |  33 | 227 |
+|  14 |  39 | 263 |
+|  12 |  40 | 264 |
+|  53 | 172 | 978 |
+|  23 |  59 | 321 |
+|-----+-----+-----|
+| 114 |     |     |
+#+TBLFM: $1=vsum(@1..@-1)
+
+: for i in boilerplate/*.s {cat $i |wc}
+|  46 | 117 |  784 |
+|  51 | 130 |  847 |
+|  51 | 130 |  847 |
+|  68 | 170 | 1182 |
+|  81 | 167 | 1110 |
+|-----+-----+------|
+| 297 |     |      |
+#+TBLFM: $1=vsum(@1..@-1)
+
+or 297 lines of assembly.
+
+I'll now take these and find common patterns of commands in their
+assembly code with [[usage-profiling]].
+
+** DONE investigate out-of-memory error
+see [[simple-gp-pinyon-sect-swp-crs]]
+
+probably not too much to be done for it aside form allowing the heap
+to take up more space...
+
+: java -Xms<initial heap size> -Xmx<maximum heap size>
+
+default is
+
+: java -Xms32m -Xmx128m
+
+** HOLD new genetic operators "mutation" and "crossover"
+   - State "HOLD"       from "HOLD"       [2010-01-15 Fri 10:37]
+
+These have been pulled out in order for a clean comparison with
+genprog.  At some point in the future they may be re-evaluated and
+replaced.
+
+*** crossover
+#+begin_src clojure  
+  (defn crossover
+    "Combine two asm using double-point crossover.  This can be forced
+  to a single line change by adding a third argument."
+    ([mother father] (crossover mother father nil))
+    ([mother father single]
+       (let [m-start (weighted-place mother)
+             m-length (if single 1
+                          (weighted-place (drop m-start mother)))
+             f-start (weighted-place father)
+             f-length (if single 1
+                          (place (drop f-start father)))]
+         (concat (take m-start mother)
+                 (take f-length (drop f-start father))
+                 (drop (+ m-start m-length) mother)))))
+#+end_src
+
+*** mutation
+Currently we swap the "argument" portion of a command with another
+"argument" from the same command in the assembly file.  It might be
+nice to come up with a good way to "change" rather than "swap" the
+value of this argument -- possibly even keep a running list of all of
+the possible valid values.
+
+**** by command
+    :PROPERTIES:
+    :CUSTOM_ID: by-command
+    :END:
+returns a hash of assembly "commands" and their "arguments"
+#+begin_src clojure
+  (defn by-command
+    "Return the commands in an assembly file along with a list of their
+  possible predicates."
+    [asm]
+    ((fn [lines cmds]
+       (if (> (.size lines) 0)
+         (let [lines (remove string? lines)
+               line (first lines)
+               others (rest lines)
+               more-cmds (assoc cmds (first line)
+                                (cons (second line) (cmds (first line))))]
+           (recur others more-cmds))
+         cmds)) (map :line asm) {}))
+#+end_src
+**** mutate
+    :PROPERTIES:
+    :CUSTOM_ID: mutate
+    :END:
+mutate a *single* command
+
+#+begin_src clojure  
+  (defn mut-asm
+    ([asm] (mut-asm asm nil))
+    ([asm throw-away]
+       (let [mut-point (weighted-place asm)
+             mut-line (:line (nth asm mut-point))
+             cmds (by-command asm)
+             lines (filter string? (map :line asm))]
+         (concat
+          (take mut-point asm)
+          (list (if (string? mut-line)
+                  (pick lines)
+                  (concat (first mut-line)
+                          (pick (cmds (first mut-line))))))
+          (drop (+ mut-point 1) asm)))))
+#+end_src
+
+** DONE fix issue with 20 scores
+this is really just an issue with the shell scripts
+
+now only reading the STDOUT (not STDERR) of the test-*.sh scripts
+
+** DONE fix packaging up of results
+the =mv= lines in the [[simple-gp-experiment]] aren't working
+* COMMENT Util
+
+for copying tangled scripts over to pinyon
+
+#+results: sync-dirs
+| test |
+| src  |
+| lib  |
+
+#+begin_src ruby :var dirs=sync-dirs :results silent
+  dirs.each{|d| puts %x{rsync --progress -aruv #{d}/ pinyon:research/code/#{d}} }
+#+end_src
+
+for pushing the new website up to pinyon
+: rsync --progress -aruv --delete _asm-gp/ moons:public_html/research/asm-gp
