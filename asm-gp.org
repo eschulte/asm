@@ -520,13 +520,13 @@ Stochastic universal Sampling (see [[wiki:Stochastic_universal_sampling]])
         ;; write out the best so far
         (message "generation %d mean-score %S best{:fitness %S, :trials %d}"
                  generation mean (:fitness best) (:trials best))
-        (write-obj (format "variants/gen.%d.best.%S.clj" generation (:fitness best))
+        (write-obj (format "variant.gen.%d.best.%S.clj" generation (:fitness best))
                    best)
         (if (>= (:fitness best) target-fitness)
           (do ;; write out the winner to a file and return
             (message "success after %d generations and %d fitness evaluations"
                      generation @fitness-count)
-            (write-obj "variants/best.clj" best) best)
+            (write-obj "best.clj" best) best)
           (if (>= generation max-generations)
             (do ;; print out failure message and return the best we found
               (message "failed after %d generations and %d fitness evaluations"
@@ -691,20 +691,41 @@ new fitness and compilation functions
      [swap        "relative chance of mutation swap" 1]
      [tour?       "use tournament selection for sampling"]
      rest]
+  
+    ;; define GP parameters
+    (def target-fitness max)
+    (def max-generations gen)
+    (def population-size pop)
+    (def use-tournament tour?)
+    (def max-section-size sect-size)
+    (def good-mult good-factor)
+    (def bad-mult bad-factor)
+    (def compiler gcc)
+    (def compiler-flags ldflags)
+    (def test-dir "./")
+    (def test-timeout 2000)
+    (def test-good good)
+    (def test-bad bad)
+  
+    ;; save configuration to file
+    (write-obj "config.clj"
+               (list
+                "target-fitness" max
+                "max-generations" gen
+                "population-size" pop
+                "use-tournament" tour?
+                "max-section-size" sect-size
+                "good-mult" good-factor
+                "bad-mult" bad-factor
+                "compiler" gcc
+                "compiler-flags" ldflags
+                "test-dir" "./"
+                "test-timeout" 2000
+                "test-good" good
+                "test-bad" bad))
+  
+    ;; run evolution
     (doseq [baseline-path rest]
-      (def target-fitness max)
-      (def max-generations gen)
-      (def population-size pop)
-      (def use-tournament tour?)
-      (def max-section-size sect-size)
-      (def good-mult good-factor)
-      (def bad-mult bad-factor)
-      (def compiler gcc)
-      (def compiler-flags ldflags)
-      (def test-dir "./")
-      (def test-timeout 2000)
-      (def test-good good)
-      (def test-bad bad)
       (let [fitness-cache (ref (if fit-cache (read-obj fit-cache) {}))
             baseline (apply-path
                       (apply-path
@@ -713,7 +734,8 @@ new fitness and compilation functions
                       :bad-path (smooth-path (if bad-path (read-path bad-path) nil)))]
         ;; sanity check
         (assert (= (:fitness (evaluate-asm baseline)) 5))
-        (evolve baseline))))
+        (evolve baseline)
+        (if fit-cache (write-obj fit-cache @fitness-cache)))))
 #+end_src
 
 * Tasks [15/26]
@@ -1177,7 +1199,7 @@ compiled binary.  The mapping is written to =mapping.clj=.
 #+begin_src clojure :shebang #! /usr/bin/env clj
   (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
   
-  (def asm-file (read-asm (second *command-line-args*)))
+  (def asm-file (:representation (read-asm (second *command-line-args*))))
   (message "asm file: %s %d lines" (second *command-line-args*) (.size asm-file))
   (def bin-file (nth *command-line-args* 2))
   (message "bin-file: %s" bin-file)
@@ -1240,7 +1262,8 @@ the output of =opannotate= through a pipe.
    (when-let [match (re-matches #"[\s]+([\d]+)[\s]+([\.\d]+) : ([\w]+):.*" line)]
      (dorun
       (map
-       (fn [_] (if-let [line (mapping (format "0x0000000000%s" (nth match 3)))]
+       (fn [_] (if-let [line (or (mapping (format "0x0000000000%s" (nth match 3)))
+                                 (mapping (format "0x0%s" (nth match 3))))]
                  (println line)))
        (range (Integer/parseInt (nth match 1)))))))
 #+end_src
