@@ -82,6 +82,7 @@ ASM offers additional advantages of
   :session:  asm-gp
   :tangle:   src/asm-gp
   :j-file:   code
+  :comments: no
   :END:
 To use this code, evaluate this subtree in your slime session.
 1) tangle out a clojure file by calling `org-babel-tangle'
@@ -220,9 +221,6 @@ timeout long-running commands
   (def max-section-size 1)
   (def fitness-cache-path
        (.getPath (f/file-str "~/research/code/data/fitness-cache.clj")))
-  (def baseline-path nil)
-  (def good-path-path nil)
-  (def bad-path-path nil)
   (def good-mult 1)
   (def bad-mult 5)
   (def compiler "gcc")
@@ -234,6 +232,41 @@ timeout long-running commands
 #+end_src
 
 ** Assembly Manipulation
+*** read a path
+smooth out the weight of a good/bad path
+#+begin_src clojure
+  (defn read-path
+    "Read the given path giving the raw sum of the value for each
+    instruction."  [path-to-path]
+    (reduce
+     (fn [a f] (assoc a f (inc (get a f 0)))) {}
+     (map (fn [arg] (Integer/parseInt arg))
+          (f/read-lines path-to-path))))
+#+end_src
+
+*** smooth path
+#+begin_src clojure  
+  (defn smooth-path
+    "Smooth the given path by blurring with a 1-D Gaussian, then taking
+    the log of all values -- with a min value of 1 for each
+    instruction."  [path]
+    (let [kernel {-3 0.006, -2 0.061, -1 0.242, 0 0.383, 1 0.242, 2 0.061, 3 0.006}]
+      ;; log of the blurred weights
+      (reduce
+       (fn [accum el] (assoc accum (first el) (m/log (inc (second el))))) {}
+       ;; 1D Gaussian Smoothing of weights
+       (reduce
+          (fn [accum el]
+            (reduce
+             (fn [a f]
+               (let [place (+ (first el) (first f))]
+                 (assoc a place 
+                        (+ (get a place 0)
+                           (* (second f) (second el))))))
+             accum kernel)) {}
+             path))))
+#+end_src
+
 *** apply path
 Apply the weights in a good or bad path to a GP individual
 #+begin_src clojure
@@ -512,61 +545,6 @@ Stochastic universal Sampling (see [[wiki:Stochastic_universal_sampling]])
               population-size)
              (+ generation 1)))))))
 #+end_src
-** Run experiment
-a macro to assist in running an experiment
-#+begin_src clojure
-  (defmacro run-experiment [& body]
-    `(do
-       ;; prepare the experiment
-       ;; ----------------------
-       ;; 1) load up the fitness cache
-       (def fitness-cache (ref (read-obj (.getPath (f/file-str fitness-cache-path)))))
-       ;; 2) load up the good and bad paths
-       (let [load-path# (fn [first-path# second-path#]
-                          (reduce ;; log of the weights
-                           (fn [a# el#]
-                             (assoc a# (first el#) (m/log (inc (second el#))))) {}
-                             ;; 1D Gaussian Smoothing of weights
-                             (let [kernel# {-3 0.006, -2 0.061, -1 0.242, 0 0.383, 1 0.242, 2 0.061, 3 0.006}]
-                               (reduce ;; for each weighted element of the bad-path
-                                (fn [accum# el#]
-                                  (reduce ;; for each part of the Gaussian kernel
-                                   (fn [a# f#]
-                                     (let [place# (+ (first el#) (first f#))]
-                                       (assoc a# place# 
-                                              (+ (get a# place# 0)
-                                                 (* (second f#) (second el#))))))
-                                   accum# kernel#)) {}
-                                   (reduce
-                                    (fn [a# f#] (let [val# (get a# f# 0)]
-                                                  (if (> val# 1)
-                                                    (assoc a# f# (dec val#))
-                                                    (dissoc a# f#))))
-                                    (reduce
-                                     (fn [a# f#] (assoc a# f# (inc (get a# f# 0)))) {}
-                                     (map (fn [arg#] (Integer/parseInt arg#))
-                                          (f/read-lines first-path#)))
-                                    (map (fn [arg#] (Integer/parseInt arg#))
-                                         (f/read-lines second-path#)))))))]
-         (if (and bad-path-path good-path-path)
-           (do
-             (def bad-path (load-path# bad-path-path good-path-path))
-             (def good-path (load-path# good-path-path bad-path-path))
-             (def baseline (apply-path (apply-path
-                                        (read-asm baseline-path)
-                                        :good-weight good-path) :bad-weight bad-path)))
-           (def baseline (read-asm baseline-path))))
-       ;; 3) load up the baseline individual -- with path weights
-       
-       ;; 4) run the experiment
-       (let [temp# (do ~@body)]
-         ;; 5) save the fitness-cache
-         (write-obj (.getPath (f/file-str fitness-cache-path))
-                    @fitness-cache)
-         ;; 6) return the result
-         temp#)))
-#+end_src
-
 ** Java Byte-Code Functions
     :PROPERTIES:
     :tangle:   src/bytecode-gp
@@ -688,6 +666,56 @@ new fitness and compilation functions
         (if (write-asm (str asm-dir "/" (.getClassName base-class) ".class") asm)
           asm-dir
           nil))))
+#+end_src
+
+** =modify= shell script
+
+#+begin_src clojure :tangle scripts/modify :shebang #! /usr/bin/env clj
+  (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")
+  (in-ns 'asm-gp)
+  (require ['clojure.contrib.command-line :as 'cmd])
+  (cmd/with-command-line (rest *command-line-args*)
+    "Prototype No-Specification Machine-code-level Bug-Fixer\n\tmodify [opts] baseline.s"
+    [[gcc         "use X to compile C files" "gcc"]
+     [ldflags     "use X as LDFLAGS when compiling" nil]
+     [good        "use X as good-test command" "./test-good.sh"]
+     [bad         "use X as bad-test command" "./test-bad.sh"]
+     [bad-factor  "multiply 'bad' testcases by X for utility" 5]
+     [good-factor "multiply 'good' testcases by X for utility" 1]
+     [max         "best fitness possible is X" 10]
+     [fit-cache   "path to the fitness cache"]
+     [good-path   "file specifying the good path"]
+     [bad-path    "file specifying the good path"]
+     [pop         "use population size of X" 40]
+     [gen         "use X genetic algorithm generations" 10]
+     [sect-size   "mutate over sections of X instructions" 1]
+     [ins         "relative chance of mutation insertion" 1]
+     [del         "relative chance of mutation deletion" 1]
+     [swap        "relative chance of mutation swap" 1]
+     [tour?       "use tournament selection for sampling"]
+     rest]
+    (doseq [baseline-path rest]
+      (def target-fitness max)
+      (def max-generations gen)
+      (def population-size pop)
+      (def use-tournament tour?)
+      (def max-section-size sect-size)
+      (def good-mult good-factor)
+      (def bad-mult bad-factor)
+      (def compiler gcc)
+      (def compiler-flags ldflags)
+      (def test-dir "./")
+      (def test-timeout 2000)
+      (def test-good good)
+      (def test-bad bad)
+      (let [fitness-cache (ref (if fit-cache (read-obj fit-cache) {}))
+            baseline (apply-path
+                      (apply-path
+                       (read-asm baseline-path)
+                       :good-path (smooth-path (if good-path (read-path good-path) nil)))
+                      :bad-path (smooth-path (if bad-path (read-path bad-path) nil)))]
+        (assert (= (:fitness (evaluate-asm baseline)) 5))
+        (evolve baseline))))
 #+end_src
 
 * Experiments
@@ -3019,7 +3047,16 @@ running into a null pointer exception, not sure where
           at clojure.lang.Var.invoke(Var.java:346)
 #+end_example
 
-* Tasks [15/25]
+* Tasks [15/26]
+** TODO write a script wrapper for shell script execution
+   - State "TODO"       from ""           [2010-02-06 Sat 12:35]
+
+This should respond to most of the same commands as the existing
+genprog =modify= command.
+
+also, we should write out the STDOUT to debug files as done by
+=modify=
+
 ** DONE begin tracking more meta-information on individuals
    - State "DONE"       from "TODO"       [2010-01-29 Fri 12:01]
    - State "TODO"       from ""           [2010-01-29 Fri 11:05]
