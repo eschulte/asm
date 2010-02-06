@@ -431,12 +431,9 @@ counter also protected behind a ref.
                 run-test (fn [test mult]
                            (* mult
                               (try
-                               (.size
-                                (remove #(= "" %)
-                                        (seq (.split (:out
-                                                      (with-timeout test-timeout
-                                                        (s/sh test bin :return-map true)))
-                                                     "\n"))))
+                               (let [out-file (.getPath (File/createTempFile "variant" ".out"))]
+                                 (with-timeout test-timeout (s/sh test bin out-file))
+                                 (.size (f/read-lines out-file)))
                                (catch java.util.concurrent.TimeoutException e 0))))]
             (assoc asm
               :fitness ((dosync (alter fitness-cache assoc (.hashCode
@@ -714,6 +711,7 @@ new fitness and compilation functions
                        (read-asm baseline-path)
                        :good-path (smooth-path (if good-path (read-path good-path) nil)))
                       :bad-path (smooth-path (if bad-path (read-path bad-path) nil)))]
+        ;; sanity check
         (assert (= (:fitness (evaluate-asm baseline)) 5))
         (evolve baseline))))
 #+end_src
@@ -1166,7 +1164,7 @@ putting this all together to get some paths
 
 *** better =mem-mapping= to lines of asm
     :PROPERTIES:
-    :tangle:   mem-mapping
+    :tangle:   scripts/mem-mapping
     :CUSTOM_ID: mem-mapping
     :END:
 
@@ -1176,8 +1174,8 @@ assembly.  To run it needs the path to the assembly file, and to the
 compiled binary.  The mapping is written to =mapping.clj=.
 : clj mem-mapping.clj httpd_comb.s nullhttpd
 #+source: mem-to-asm
-#+begin_src clojure
-  (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+#+begin_src clojure :shebang #! /usr/bin/env clj
+  (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
   
   (def asm-file (read-asm (second *command-line-args*)))
   (message "asm file: %s %d lines" (second *command-line-args*) (.size asm-file))
@@ -1225,14 +1223,14 @@ compiled binary.  The mapping is written to =mapping.clj=.
 *** =opannotate-to-path=
     :PROPERTIES:
     :CUSTOM_ID: opannotate-to-path
-    :tangle:   opannotate-to-path
+    :tangle:   scripts/opannotate-to-path
     :END:
 Map output from opannotate to a path in the related asm file.  This
 requires the =mapping.clj= written out by [[mem-mapping]], and it accepts
 the output of =opannotate= through a pipe.
 
-#+begin_src clojure
-  (load-file "../src/asm-gp.clj")(in-ns 'asm-gp)
+#+begin_src clojure :shebang #! /usr/bin/env clj
+  (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
   
   (def mapping (read-obj "mapping.clj"))
   
@@ -1480,7 +1478,7 @@ in the assembly source-code file.
 
 *** mem-to-asm
      :PROPERTIES:
-     :tangle:   mem-to-asm
+     :tangle:   scripts/mem-to-asm
      :CUSTOM_ID: mem-to-asm
      :END:
 
@@ -1494,8 +1492,8 @@ this script will
    them on the fly to loc in the assembly file which are printed to
    STDOUT
 
-#+begin_src clojure
-  (load-file "src/asm-gp.clj")(in-ns 'asm-gp)
+#+begin_src clojure :shebang #! /usr/bin/env clojure
+  (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
   
   (def asm-file (read-asm (second *command-line-args*)))
   
