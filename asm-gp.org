@@ -1259,7 +1259,7 @@ the output of =opannotate= through a pipe.
   (while-let
    [line (read-line)]
    ;;     10 27.7778 : 804ba03:
-   (when-let [match (re-matches #"[\s]+([\d]+)[\s]+([\.\d]+) : ([\w]+):.*" line)]
+   (when-let [match (re-matches #"[\s]+([\d]+)[\s]+([\.\d]+)[\s]+:[\s]+([\w]+):.*" line)]
      (dorun
       (map
        (fn [_] (if-let [line (or (mapping (format "0x0000000000%s" (nth match 3)))
