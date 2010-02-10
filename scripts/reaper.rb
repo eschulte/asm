@@ -1,5 +1,10 @@
 #!/usr/bin/env ruby
 ## reap long-running processes
+##
+##   (?_^
+##    |\ )
+##    |/_\
+##
 def variant_procs
   %x{ps auxwww |grep -i "tmp/variant"}.split("\n").map{ |l| $1 if l.match(/^[\S]+[\s]+([\d]+)[\s]+/) }
 end
