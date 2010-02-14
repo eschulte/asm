@@ -229,6 +229,7 @@ timeout long-running commands
   (def test-timeout 2000)
   (def test-good nil) ;; "./test-good.sh"
   (def test-bad nil)  ;; "./test-bad.sh"
+  (def java-class-nest nil)
 #+end_src
 
 ** Assembly Manipulation
@@ -656,8 +657,10 @@ new fitness and compilation functions
   (defn compile-asm
     "Compile the asm and return a path to the resulting binary.  Return
     nil if the compilation (write) fails."  [asm]
-    (let [asm-dir (.getPath (File/createTempFile "variant" ""))]
-      (s/sh "rm" asm-dir) (s/sh "mkdir" asm-dir)
+    (let [asm-dir (str
+                   (.getPath (File/createTempFile "variant" "")) "/"
+                   (or java-class-nest ""))]
+      (s/sh "rm" "-rf" asm-dir) (s/sh "mkdir" "-p" asm-dir)
       (assoc asm
         :compile
         (if (write-asm (str asm-dir "/" (.getClassName base-class) ".class") asm)
@@ -679,6 +682,7 @@ new fitness and compilation functions
      [bad         "use X as bad-test command" "./test-bad.sh"]
      [bad-factor  "multiply 'bad' testcases by X for utility" 5]
      [good-factor "multiply 'good' testcases by X for utility" 1]
+     [sanity-test "sanity fitness of baseline individual"]
      [max         "best fitness possible is X" 10]
      [fit-cache   "path to the fitness cache"]
      [good-path   "file specifying the good path"]
@@ -690,8 +694,14 @@ new fitness and compilation functions
      [del         "relative chance of mutation deletion" 1]
      [swap        "relative chance of mutation swap" 1]
      [tour?       "use tournament selection for sampling"]
+     [java?       "operate on a Java .class file"]
+     [class-nest  "class directory nesting for java .class files"]
      rest]
   
+    ;; over-define some functions for working with Java .class files
+    (when java?
+      (load-file "/home/eschulte/research/genprog/asm/src/bytecode-gp.clj"))
+    
     ;; define GP parameters
     (def target-fitness max)
     (def max-generations gen)
@@ -706,6 +716,7 @@ new fitness and compilation functions
     (def test-timeout 2000)
     (def test-good good)
     (def test-bad bad)
+    (def java-class-nest class-nest)
   
     ;; save configuration to file
     (write-obj "config.clj"
@@ -732,8 +743,10 @@ new fitness and compilation functions
                        (read-asm baseline-path)
                        :good-path (smooth-path (if good-path (read-path good-path) nil)))
                       :bad-path (smooth-path (if bad-path (read-path bad-path) nil)))]
+        (when java? (def base-class (.parse (new org.apache.bcel.classfile.ClassParser baseline-path))))
         ;; sanity check
-        (assert (= (:fitness (evaluate-asm baseline)) 5))
+        (when sanity-test
+          (assert (= (:fitness (evaluate-asm baseline)) sanity-test)))
         (evolve baseline)
         (if fit-cache (write-obj fit-cache @fitness-cache)))))
 #+end_src
