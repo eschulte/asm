@@ -1,3 +1,4 @@
 scripts/*.clj
 test/*
 src/*
+lib/*
