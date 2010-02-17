@@ -567,12 +567,14 @@ new functions for reading and writing assembly files
     "Read in a .class file to a list of Byte-code instructions.  For now
     we'll just be working with the main function." [path]
     {:representation
-     (let [class (new ClassGen (.parse (new ClassParser path)))
-           method (new MethodGen
-                       (second (.getMethods class))
-                       (.getClassName class)
-                       (.getConstantPool class))]
-       (.getInstructionList method))
+     (let [class (new ClassGen (.parse (new ClassParser path)))]
+       (map
+        (fn [meth]
+          (.getInstructionList
+           (new MethodGen
+                meth
+                (.getClassName class)
+                (.getConstantPool class)))) (.getMethods class)))
      :compile nil :fitness nil :trials nil :operations nil})
   
   (defn write-asm
