@@ -216,7 +216,7 @@ timeout long-running commands
   (def target-fitness 10)
   (def max-generations 10)
   (def population-size 40)
-  (def tournament-size 2)
+  (def tournament-size 3)
   (def use-tournament false)
   (def max-section-size 1)
   (def crossover-rate 0.1)
@@ -716,6 +716,7 @@ new fitness and compilation functions
      [swap        "relative chance of mutation swap" 1]
      [cross-rate  "percentage of population generated through crossover" 0.1]
      [tour?       "use tournament selection for sampling"]
+     [tour-size   "tournament size" 3]
      [java?       "operate on a Java .class file"]
      [class-nest  "class directory nesting for java .class files"]
      rest]
@@ -729,6 +730,7 @@ new fitness and compilation functions
     (def max-generations gen)
     (def population-size pop)
     (def use-tournament tour?)
+    (def tournament-size tour-size)
     (def max-section-size sect-size)
     (def crossover-rate cross-rate)
     (def good-mult good-factor)
