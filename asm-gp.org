@@ -580,6 +580,7 @@ new byte-code strings to a =.class= file.
   (def base-class nil)
 #+end_src
 
+*** read-asm
 new functions for reading and writing assembly files
 #+begin_src clojure
   (defn read-asm
@@ -595,38 +596,45 @@ new functions for reading and writing assembly files
                 (.getClassName class)
                 (.getConstantPool class)))) (.getMethods class)))
      :compile nil :fitness nil :trials nil :operations nil})
-  
+#+end_src
+
+*** write-asm
+#+begin_src clojure  
   (defn write-asm
     "Write a list of Byte-code instructions to a file.  Return f if the
     write was successful, and nil otherwise." [f lst]
     (if (not base-class)
       (message "base class is uninitialized!"))
     (try
-     (let [lst (:representation lst)
-           cls (new ClassGen base-class)
-           mth (new MethodGen (second (.getMethods cls))
-                    (.getClassName cls)
-                    (.getConstantPool cls))]
-       (.setPositions lst false)
-       (.setInstructionList mth lst)
-       (.setMaxStack mth)
-       (.setMaxLocals mth)
-       (.removeLineNumbers mth)
-       (.replaceMethod cls
-                       (second (.getMethods cls))
-                       (.getMethod mth))
-       (.dump (.getJavaClass cls) f)
-       f)
+     (let [cls (new ClassGen base-class)]
+       (map
+        (fn [base lst]
+          (let [mth (new MethodGen base
+                         (.getClassName cls)
+                         (.getConstantPool cls))]
+            (.setPositions lst false)
+            (.setInstructionList mth lst)
+            (.setMaxStack mth)
+            (.setMaxLocals mth)
+            (.removeLineNumbers mth)
+            (.replaceMethod cls base (.getMethod mth))))
+        (.getMethods cls) (:representation lst))
+       (.dump (.getJavaClass cls) f))
+     f
      (catch Exception e nil)))
 #+end_src
 
+*** gp-op-wrap
 over-defining all GP operations for InstructionLists
 #+begin_src clojure
   (defmacro gp-op-wrapper
     "Wrap a GP operation in a try/catch block which will return an empty
     InstructinoList if any errors are thrown while manipulating the
     individual."  [& body] `(try ~@body (catch Exception _# (InstructionList.))))
-  
+#+end_src
+
+*** swap-asm
+#+begin_src clojure  
   (defn swap-asm
     "Swap two instructions in this InstructionList.  Not Weighted."
     ([asm _] (swap-asm asm))
@@ -642,7 +650,10 @@ over-defining all GP operations for InstructionLists
             (.move asm target (nth handles (inc place)))
             asm))
          :operations (cons :swap (:operations asm)))))
-  
+#+end_src
+
+*** append-asm
+#+begin_src clojure  
   (defn append-asm
     "Append an instruction somewhere in this InstructionList.  Not
     Weighted.  Return a copy of the original if the operations fail."
@@ -658,7 +669,10 @@ over-defining all GP operations for InstructionLists
                      (.getInstruction (pick handles)))
             asm))
          :operations (cons :append (:operations asm)))))
-  
+#+end_src
+
+*** delete-asm
+#+begin_src clojure  
   (defn delete-asm
     "Remove an instruction from list InstructionList.  Not Weighted"
     ([asm _] (delete-asm asm))
@@ -673,6 +687,7 @@ over-defining all GP operations for InstructionLists
          :operations (cons :delete (:operations asm)))))
 #+end_src
 
+*** compile-asm
 new fitness and compilation functions
 #+begin_src clojure
   (defn compile-asm
