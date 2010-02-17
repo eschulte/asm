@@ -219,6 +219,7 @@ timeout long-running commands
   (def tournament-size 2)
   (def use-tournament false)
   (def max-section-size 1)
+  (def crossover-rate 0.1)
   (def fitness-cache-path
        (.getPath (f/file-str "~/research/code/data/fitness-cache.clj")))
   (def good-mult 1)
@@ -380,6 +381,19 @@ which here means either delete, append, or swap
        (= choice 2) (swap-asm asm))))
 #+end_src
 
+*** crossover-asm
+perform one or two point crossover between two asm individuals
+#+begin_src clojure
+  (defn crossover-asm
+    "Takes two individuals and returns the result of performing single
+    point crossover between then."  [left right]
+    {:representation
+     (let [left (:representation left) right (:representation right)]
+       (concat (take (weighted-place left) left) (drop (weighted-place right) right)))
+     :operations (list :crossover (list (:operations left) (:operations right)))
+     :compile nil :fitness nil :trials nil})
+#+end_src
+
 *** compile-asm
 #+begin_src clojure
   (defn compile-asm
@@ -537,8 +551,13 @@ Stochastic universal Sampling (see [[wiki:Stochastic_universal_sampling]])
               (concat
                (dorun
                 (pmap #(evaluate-asm %)
-                      (pmap #(mutate-asm %)
-                            (select-asm population population-size))))
+                      (concat
+                       (take (* crossover-rate population-size)
+                             (repeatedly
+                              (apply crossover-asm (select-asm population 2))))
+                       (pmap #(mutate-asm %)
+                             (select-asm population
+                                         (* (1 - crossover-rate population-size)))))))
                population)
               population-size)
              (+ generation 1)))))))
@@ -695,6 +714,7 @@ new fitness and compilation functions
      [ins         "relative chance of mutation insertion" 1]
      [del         "relative chance of mutation deletion" 1]
      [swap        "relative chance of mutation swap" 1]
+     [cross-rate  "percentage of population generated through crossover" 0.1]
      [tour?       "use tournament selection for sampling"]
      [java?       "operate on a Java .class file"]
      [class-nest  "class directory nesting for java .class files"]
@@ -710,6 +730,7 @@ new fitness and compilation functions
     (def population-size pop)
     (def use-tournament tour?)
     (def max-section-size sect-size)
+    (def crossover-rate cross-rate)
     (def good-mult good-factor)
     (def bad-mult bad-factor)
     (def compiler gcc)
@@ -2045,7 +2066,7 @@ genprog.  At some point in the future they may be re-evaluated and
 replaced.
 
 *** crossover
-#+begin_src clojure  
+#+begin_src clojure
   (defn crossover
     "Combine two asm using double-point crossover.  This can be forced
   to a single line change by adding a third argument."
