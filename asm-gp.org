@@ -624,13 +624,27 @@ new functions for reading and writing assembly files
      (catch Exception e nil)))
 #+end_src
 
-*** gp-op-wrap
-over-defining all GP operations for InstructionLists
+*** gp utility
+wrap GP operations in try/catch blocks
 #+begin_src clojure
   (defmacro gp-op-wrapper
     "Wrap a GP operation in a try/catch block which will return an empty
     InstructinoList if any errors are thrown while manipulating the
     individual."  [& body] `(try ~@body (catch Exception _# (InstructionList.))))
+#+end_src
+
+select places and instruction from lists of instruction lists
+#+begin_src clojure
+  (defn instrs-place
+    "Return a random location from a list of instruction lists."
+    [instrs]
+    (let [meth_num (rand-int (.size instrs))]
+      (list meth_num (rand-int (.size (nth instrs meth_num))))))
+  
+  (defn instrs-pick
+    "Pick an instruction from a list of instruction lists."
+    [instrs place]
+    (nth (.getInstructionHandles (nth instrs (first place))) (second place)))
 #+end_src
 
 *** swap-asm
@@ -642,12 +656,12 @@ over-defining all GP operations for InstructionLists
        (assoc asm
          :representation
          (gp-op-wrapper
-          (let [asm (.copy (:representation asm))
-                handles (seq (.getInstructionHandles asm))
-                place (rand-int (dec (.size handles)))
-                target (pick handles)]
-            (.move asm (nth handles place) target)
-            (.move asm target (nth handles (inc place)))
+          (let [asm (map #(.copy %) (:representation asm))
+                place (instrs-place asm)
+                target (instrs-pick (instrs-place asm))]
+            (.move asm (instrs-pick asm place) target)
+            (.move asm target (nth handles (list (first place)
+                                                 (inc (second place)))))
             asm))
          :operations (cons :swap (:operations asm)))))
 #+end_src
