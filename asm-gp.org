@@ -557,7 +557,7 @@ Stochastic universal Sampling (see [[wiki:Stochastic_universal_sampling]])
                               (apply crossover-asm (select-asm population 2))))
                        (pmap #(mutate-asm %)
                              (select-asm population
-                                         (* (1 - crossover-rate population-size)))))))
+                                         (* (- 1 crossover-rate population-size)))))))
                population)
               population-size)
              (+ generation 1)))))))
