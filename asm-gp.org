@@ -83,6 +83,7 @@ ASM offers additional advantages of
   :tangle:   src/asm-gp
   :j-file:   code
   :comments: no
+  :ID:       2c73652b-b0aa-4770-b431-e58f558a0bd5
   :END:
 To use this code, evaluate this subtree in your slime session.
 1) tangle out a clojure file by calling `org-babel-tangle'
@@ -94,6 +95,9 @@ To use this code, evaluate this subtree in your slime session.
 3) try out one of the scenarios in [[usage]]
    
 ** Namespace and included libraries
+   :PROPERTIES:
+   :ID:       6704f70c-b95e-4085-bf4e-f17c351fd01d
+   :END:
 #+begin_src clojure
   (ns asm-gp
       (:require (clojure.contrib
@@ -106,6 +110,9 @@ To use this code, evaluate this subtree in your slime session.
 
 ** Utility functions
 *** macros
+    :PROPERTIES:
+    :ID:       ddde78da-0567-4ae9-802f-41f289ed87aa
+    :END:
 
 #+begin_src clojure
 (defmacro while-let
@@ -132,6 +139,9 @@ timeout long-running commands
 #+end_src
 
 *** serialization
+    :PROPERTIES:
+    :ID:       6ea5f5f7-1e96-4011-bc5a-92a3bcb72e63
+    :END:
 - write an object to a file
   #+begin_src clojure
     (defn write-obj
@@ -146,6 +156,9 @@ timeout long-running commands
   #+end_src
 
 *** random/weighted list access
+    :PROPERTIES:
+    :ID:       5912c566-6ed6-400e-9f4d-0c22b03fb358
+    :END:
 #+begin_src clojure
   (defn shuffle
     "Shuffles coll using a Java ArrayList." [coll]
@@ -185,6 +198,9 @@ timeout long-running commands
 #+end_src
 
 *** reading and writing assembly
+    :PROPERTIES:
+    :ID:       c883281f-48ec-4301-80b0-fc2b48146230
+    :END:
 #+begin_src clojure
   (defn read-asm
     "Read in an assembly file as list and parse cmd lines."
@@ -235,6 +251,9 @@ timeout long-running commands
 
 ** Assembly Manipulation
 *** read a path
+    :PROPERTIES:
+    :ID:       71b8ce66-5b52-409f-b338-74e39f6849a8
+    :END:
 smooth out the weight of a good/bad path
 #+begin_src clojure
   (defn read-path
@@ -247,6 +266,9 @@ smooth out the weight of a good/bad path
 #+end_src
 
 *** smooth path
+    :PROPERTIES:
+    :ID:       c658d230-db3c-43f0-92be-a3a42023e8ca
+    :END:
 #+begin_src clojure  
   (defn smooth-path
     "Smooth the given path by blurring with a 1-D Gaussian, then taking
@@ -270,6 +292,9 @@ smooth out the weight of a good/bad path
 #+end_src
 
 *** apply path
+    :PROPERTIES:
+    :ID:       0213ca00-f446-45b3-8d1b-ad9b3df53239
+    :END:
 Apply the weights in a good or bad path to a GP individual
 #+begin_src clojure
   (defn apply-path
@@ -301,6 +326,9 @@ Apply the weights in a good or bad path to a GP individual
 #+end_src
 
 *** swap-asm
+    :PROPERTIES:
+    :ID:       c6df8054-1055-45c5-b689-b4472f07d7ec
+    :END:
 #+begin_src clojure
   (defn swap-asm
     "Swap two lines or sections of the asm."
@@ -330,6 +358,9 @@ Apply the weights in a good or bad path to a GP individual
 #+end_src
 
 *** delete-asm
+    :PROPERTIES:
+    :ID:       33dbf594-fc55-44c7-8477-6bd1a520f95a
+    :END:
 delete a section
 #+begin_src clojure
   (defn delete-asm
@@ -348,6 +379,9 @@ delete a section
 #+end_src
 
 *** append-asm
+    :PROPERTIES:
+    :ID:       42a5c988-1d2c-4571-89f8-7f5dd4144d31
+    :END:
 append a section or line into a random place
 #+begin_src clojure
   (defn append-asm
@@ -368,6 +402,9 @@ append a section or line into a random place
 #+end_src
 
 *** mutate-asm
+    :PROPERTIES:
+    :ID:       60ae1744-f49e-4b0a-a1d1-702d703823cf
+    :END:
 which here means either delete, append, or swap
 #+begin_src clojure
   (defn mutate-asm
@@ -382,6 +419,9 @@ which here means either delete, append, or swap
 #+end_src
 
 *** crossover-asm
+    :PROPERTIES:
+    :ID:       beb50995-dcf1-4612-848c-7808164be4ac
+    :END:
 perform one or two point crossover between two asm individuals
 #+begin_src clojure
   (defn crossover-asm
@@ -395,6 +435,9 @@ perform one or two point crossover between two asm individuals
 #+end_src
 
 *** compile-asm
+    :PROPERTIES:
+    :ID:       94a14915-ae18-4ab3-884c-9f717690416b
+    :END:
 #+begin_src clojure
   (defn compile-asm
     "Compile the asm, set it's :compile field to the path to the
@@ -415,6 +458,9 @@ perform one or two point crossover between two asm individuals
 #+end_src
 
 ** Fitness Evaluation
+   :PROPERTIES:
+   :ID:       44042354-a94e-43f3-936b-65d50bf0b136
+   :END:
 We'll cache already calculated finesses in a global hash which is
 protected behind a [[http://clojure.org/refs][ref]].
 #+begin_src clojure
@@ -463,6 +509,9 @@ counter also protected behind a ref.
 
 ** Evolution
 *** populate
+    :PROPERTIES:
+    :ID:       8078113f-c63b-4a22-93e5-233a2b5d811c
+    :END:
 #+begin_src clojure
   (defn populate
     "Return a population starting with a baseline individual.
@@ -483,6 +532,9 @@ counter also protected behind a ref.
 #+end_src
 
 *** selection -- tournament and sus
+    :PROPERTIES:
+    :ID:       559201d3-d9c4-4088-b878-6fae85d0df20
+    :END:
 tournament selection
 #+begin_src clojure
   (defn tournament
@@ -522,6 +574,9 @@ Stochastic universal Sampling (see [[wiki:Stochastic_universal_sampling]])
 #+end_src
 
 *** evolve
+    :PROPERTIES:
+    :ID:       8347689e-4fc3-4199-8884-35beae9afffa
+    :END:
 #+begin_src clojure
   (defn evolve
     "Build a population from a baseline individual and evolve until a
@@ -552,12 +607,12 @@ Stochastic universal Sampling (see [[wiki:Stochastic_universal_sampling]])
                (dorun
                 (pmap #(evaluate-asm %)
                       (concat
-                       (take (* crossover-rate population-size)
+                       (take (Math/round (* crossover-rate population-size))
                              (repeatedly
-                              (apply crossover-asm (select-asm population 2))))
+                              (fn [] (apply crossover-asm (select-asm population 2)))))
                        (pmap #(mutate-asm %)
-                             (select-asm population
-                                         (* (- 1 crossover-rate population-size)))))))
+                            (select-asm population
+                                        (Math/round (* (- 1 crossover-rate) population-size)))))))
                population)
               population-size)
              (+ generation 1)))))))
@@ -565,6 +620,7 @@ Stochastic universal Sampling (see [[wiki:Stochastic_universal_sampling]])
 ** Java Byte-Code Functions
     :PROPERTIES:
     :tangle:   src/bytecode-gp
+    :ID:       fece78b7-5b8c-4510-bffa-f46d73896971
     :END:
 
 in the asm-gp name-space
@@ -581,6 +637,9 @@ new byte-code strings to a =.class= file.
 #+end_src
 
 *** read-asm
+    :PROPERTIES:
+    :ID:       942ad66d-060e-4b79-80da-17b4d2cb5515
+    :END:
 new functions for reading and writing assembly files
 #+begin_src clojure
   (defn read-asm
@@ -599,6 +658,9 @@ new functions for reading and writing assembly files
 #+end_src
 
 *** write-asm
+    :PROPERTIES:
+    :ID:       1734877f-c8ed-40d6-949d-ef4675064f16
+    :END:
 #+begin_src clojure  
   (defn write-asm
     "Write a list of Byte-code instructions to a file.  Return f if the
@@ -625,6 +687,9 @@ new functions for reading and writing assembly files
 #+end_src
 
 *** gp utility
+    :PROPERTIES:
+    :ID:       50820f90-e596-43d9-a421-dd83cab0d6cb
+    :END:
 wrap GP operations in try/catch blocks
 #+begin_src clojure
   (defmacro gp-op-wrapper
@@ -648,6 +713,9 @@ select places and instruction from lists of instruction lists
 #+end_src
 
 *** swap-asm
+    :PROPERTIES:
+    :ID:       d01c0b7a-902a-43e9-b84f-3725fe310888
+    :END:
 #+begin_src clojure  
   (defn swap-asm
     "Swap two instructions in this InstructionList.  Not Weighted."
@@ -667,6 +735,9 @@ select places and instruction from lists of instruction lists
 #+end_src
 
 *** append-asm
+    :PROPERTIES:
+    :ID:       69ad68ea-6533-454d-847a-4f31f74be774
+    :END:
 #+begin_src clojure  
   (defn append-asm
     "Append an instruction somewhere in this InstructionList.  Not
@@ -686,6 +757,9 @@ select places and instruction from lists of instruction lists
 #+end_src
 
 *** delete-asm
+    :PROPERTIES:
+    :ID:       4a364d84-efc3-4750-9669-b235306e6e78
+    :END:
 #+begin_src clojure  
   (defn delete-asm
     "Remove an instruction from list InstructionList.  Not Weighted"
@@ -702,6 +776,9 @@ select places and instruction from lists of instruction lists
 #+end_src
 
 *** compile-asm
+    :PROPERTIES:
+    :ID:       04a68be1-a878-49ed-ad4f-9d53f553519c
+    :END:
 new fitness and compilation functions
 #+begin_src clojure
   (defn compile-asm
@@ -719,6 +796,9 @@ new fitness and compilation functions
 #+end_src
 
 ** =modify= shell script
+   :PROPERTIES:
+   :ID:       6b8b61da-cbdf-42d9-bdc8-d681b6cb0ba8
+   :END:
 
 #+begin_src clojure :tangle scripts/modify :shebang #! /usr/bin/env clj
   (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")
@@ -842,6 +922,9 @@ So an individual will look like...
 ** DONE add a timeout to the commands used to run tests
    - State "DONE"       from "TODO"       [2010-01-29 Fri 10:43]
    - State "TODO"       from ""           [2010-01-29 Fri 10:01]
+   :PROPERTIES:
+   :ID:       278c82ef-13d5-4f83-b0b6-2c5f59fac590
+   :END:
 Sometimes these commands will hang forever holding up the entire
 machinery of GP.
 
@@ -859,6 +942,9 @@ from [[http://stackoverflow.com/questions/1683680/clojure-with-timeout-macro][st
 ** DONE problems with java bytecode manipulation
    - State "DONE"       from "TODO"       [2010-01-22 Fri 21:47]
    - State "TODO"       from ""           [2010-01-22 Fri 20:57]
+   :PROPERTIES:
+   :ID:       efba0fde-ec45-40c3-baaa-c07737f03b9b
+   :END:
 
 Sadly the only reasonable fix here is to move from list
 representations to InstructionList representations.
@@ -921,6 +1007,9 @@ We are now able to read, write, and compile java .class files using
 the over-defined asm methods below.
 
 *** Over-defining some ASM functions
+    :PROPERTIES:
+    :ID:       1eb5203e-c998-4a73-8d89-39cc8ffb44c1
+    :END:
 *This code now lives in with the rest of the source code*
 
 so we just need to over-define our read-asm, write-asm, and
@@ -1064,6 +1153,9 @@ http://java-source.net/open-source/bytecode-libraries
 After trying a couple tools it looks like bcel is the way to go.
 
 **** bcel
+     :PROPERTIES:
+     :ID:       864c75e4-37e3-496b-98b5-68a4ac5c87a1
+     :END:
 [[http://jakarta.apache.org/bcel/][bcel]] is another possibility, the following is taken largely from the
 bcel tutorial at [[http://www.moparisthebest.com/smf/index.php?topic=160681.0][moparisthebest]].
 
@@ -1163,6 +1255,9 @@ now how to get from this pretty printed byte-code output to a loadable
 [[http://serp.sourceforge.net/][serp]]
 
 **** gnu.bytecode
+     :PROPERTIES:
+     :ID:       9fb0fc93-486e-49d3-a686-81d920811a4b
+     :END:
 Looks like the [[http://www.gnu.org/software/kawa/api/gnu/bytecode/package-summary.html][gnu.bytecode]] library should be helpful here.
 
 I think I've wrestled this library (contained in [[http://www.gnu.org/software/kawa/][kawa]]) into my
@@ -1403,6 +1498,7 @@ try using [[http://oprofile.sourceforge.net/]]
    - State "TODO"       from ""           [2010-01-15 Fri 15:25]
    :PROPERTIES:
    :tangle:   no
+   :ID:       c53b23d2-831f-4ee5-a04c-c25ef19d80d2
    :END:
 
 Better consistent hashing
@@ -1447,6 +1543,9 @@ much more like assigning fitness based on running time this seems just
 fine for now.
 
 *** implementation
+    :PROPERTIES:
+    :ID:       24242c3c-77fc-4e6f-a67c-64d9c3d2e56c
+    :END:
 The =time= command looks like it will be sufficient.
 
 changing test-bad.sh from
@@ -1497,6 +1596,7 @@ use it to adjust the score of the resulting scripts.
    :PROPERTIES:
    :blog: t
    :type:     task
+   :ID:       a2c9d20d-1826-441b-b595-6b4ba8b03e63
    :END:
 I collected 34 short C programs from [[http://rosettacode.org/wiki/Category:C][rosettacode]].  These programs were
 selected for their simple subject matter (mainly mathematical or array
@@ -1637,6 +1737,9 @@ focus on assembly see [[http://www.unknownroad.com/rtfm/gdbtut/gdbadvanced.html]
 I should really grow up and write a C program which uses [[http://www.cs.utah.edu/dept/old/texinfo/libgdb/libgdb.html][libgdb]]
 
 *** close look at output
+    :PROPERTIES:
+    :ID:       44ba44c6-bfa0-4af6-ba84-e3abd7b590e9
+    :END:
 thought maybe there was a way to find a constant mapping between the
 offset number in the gdb output, and the command, but there are times
 when the same command pattern takes up different amounts of offset
@@ -1736,6 +1839,7 @@ not an easy consistent mapping.
    :session:  asm-gp
    :blog:     t
    :type:     task
+   :ID:       9fbd6a4c-47c7-4532-8ed9-bff3ab5c9dcb
    :END:
 
 1) first we need to generate the good and bad paths
@@ -1776,6 +1880,7 @@ for the experiment run using this setup see [[weighted-gp]]
    :PROPERTIES:
    :blog:     t
    :type:     task
+   :ID:       26b8baf3-0a60-4ddf-ab66-0a3ef23b9578
    :END:
 As it turns out a strict bad path on the assembly instruction level
 can be too narrow.  For example on the gcd.s code the bad path limits
@@ -1849,6 +1954,7 @@ doctoring has the following effect on the weights of the bad path
    :PROPERTIES:
    :blog:     t
    :type:     task
+   :ID:       1654f067-3523-4f25-a3f2-c6e76d3eed5d
    :END:
 
 Same idea as the bad path, only using a good path to aid in selection
@@ -1931,6 +2037,9 @@ For some reason this doesn't really seem to help.
 Learning what patterns of commands are actually used in assembly files
 which are generated from C source code.
 **** generalize commands into groups
+     :PROPERTIES:
+     :ID:       aef3b821-aec8-4d29-b379-7b6bbb91a437
+     :END:
 #+begin_src clojure
   (defn generalize-cmd [cmd]
     "Map a command into a more general command class."
@@ -1957,6 +2066,9 @@ which are generated from C source code.
 #+end_src
 
 **** pull patterns out of a collection of commands
+     :PROPERTIES:
+     :ID:       ef3197cb-eba3-4906-b1c5-7cb0ca768c9b
+     :END:
 #+begin_src clojure
   (defn patterns
     "Return the patterns in coll of length size or less along with their
@@ -1980,6 +2092,9 @@ which are generated from C source code.
 #+end_src
 
 **** compile a model of these command groups and their frequencies
+     :PROPERTIES:
+     :ID:       1c5b3dba-4ad6-4639-b9bc-9cd1f1705acb
+     :END:
 #+begin_src clojure
   (defn train [asms window-size]
   (reduce
@@ -1988,6 +2103,9 @@ which are generated from C source code.
 #+end_src
 
 **** model-similarity
+     :PROPERTIES:
+     :ID:       9dcc6eb5-11d2-4bb7-879c-7496920905a8
+     :END:
 Compare two models of cmd patterns returning an integer which is
 proportional to the "similarity" in command patterns between the
 models.
@@ -2023,6 +2141,9 @@ rating.
 #+end_src
 
 *** source code for the R stat project
+    :PROPERTIES:
+    :ID:       235ab42d-f5b0-429f-8a45-dc36c1e5658b
+    :END:
 
 1) first compiled the .c files
    #+begin_src sh
@@ -2101,6 +2222,9 @@ genprog.  At some point in the future they may be re-evaluated and
 replaced.
 
 *** crossover
+    :PROPERTIES:
+    :ID:       19ea94fe-6685-40da-b528-9da8ea7e141f
+    :END:
 #+begin_src clojure
   (defn crossover
     "Combine two asm using double-point crossover.  This can be forced
@@ -2176,6 +2300,9 @@ now only reading the STDOUT (not STDERR) of the test-*.sh scripts
 ** DONE fix packaging up of results
 the =mv= lines in the [[simple-gp-experiment]] aren't working
 * COMMENT Util
+  :PROPERTIES:
+  :ID:       79ebc3e6-c662-4faf-b594-8db6cc16bf4e
+  :END:
 
 for copying tangled scripts over to pinyon
 
