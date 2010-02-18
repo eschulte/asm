@@ -716,7 +716,7 @@ select places and instruction from lists of instruction lists
     :PROPERTIES:
     :ID:       d01c0b7a-902a-43e9-b84f-3725fe310888
     :END:
-#+begin_src clojure  
+#+begin_src clojure
   (defn swap-asm
     "Swap two instructions in this InstructionList.  Not Weighted."
     ([asm _] (swap-asm asm))
@@ -725,11 +725,9 @@ select places and instruction from lists of instruction lists
          :representation
          (gp-op-wrapper
           (let [asm (map #(.copy %) (:representation asm))
-                place (instrs-place asm)
-                target (instrs-pick (instrs-place asm))]
-            (.move asm (instrs-pick asm place) target)
-            (.move asm target (nth handles (list (first place)
-                                                 (inc (second place)))))
+                left (instrs-place asm)
+                right (instrs-place asm)]
+            (message "%S" left) (message "%S" right)
             asm))
          :operations (cons :swap (:operations asm)))))
 #+end_src
@@ -738,7 +736,7 @@ select places and instruction from lists of instruction lists
     :PROPERTIES:
     :ID:       69ad68ea-6533-454d-847a-4f31f74be774
     :END:
-#+begin_src clojure  
+#+begin_src clojure
   (defn append-asm
     "Append an instruction somewhere in this InstructionList.  Not
     Weighted.  Return a copy of the original if the operations fail."
@@ -830,9 +828,9 @@ new fitness and compilation functions
      [class-nest  "class directory nesting for java .class files"]
      rest]
   
-    ;; over-define some functions for working with Java .class files
-    (when java?
-      (load-file "/home/eschulte/research/genprog/asm/src/bytecode-gp.clj"))
+    ;; ;; over-define some functions for working with Java .class files
+    ;; (when java?
+    ;;   (load-file "/home/eschulte/research/genprog/asm/src/bytecode-gp.clj"))
     
     ;; define GP parameters
     (let [to_int (fn [in] (if (string? in)
@@ -881,7 +879,8 @@ new fitness and compilation functions
                        (read-asm baseline-path)
                        :good-path (smooth-path (if good-path (read-path good-path) nil)))
                       :bad-path (smooth-path (if bad-path (read-path bad-path) nil)))]
-        (when java? (def base-class (.parse (new org.apache.bcel.classfile.ClassParser baseline-path))))
+        ;; (when java?
+        ;;   (def base-class (.parse (new org.apache.bcel.classfile.ClassParser baseline-path))))
         ;; sanity check
         (when sanity-test
           (assert (= (:fitness (evaluate-asm baseline)) sanity-test)))
