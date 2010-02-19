@@ -813,8 +813,8 @@ new fitness and compilation functions
      [sanity-test "sanity fitness of baseline individual"]
      [max         "best fitness possible is X" 10]
      [fit-cache   "path to the fitness cache"]
-     [good-path   "file specifying the good path"]
-     [bad-path    "file specifying the good path"]
+     [good-path   "file specifying the good path" "good.path"]
+     [bad-path    "file specifying the good path" "bad.path"]
      [pop         "use population size of X" 40]
      [gen         "use X genetic algorithm generations" 10]
      [sect-size   "mutate over sections of X instructions" 1]
@@ -864,6 +864,8 @@ new fitness and compilation functions
                 "max-section-size" sect-size
                 "good-mult" good-factor
                 "bad-mult" bad-factor
+                "good-path" good-path
+                "bad-path" bad-path
                 "compiler" gcc
                 "compiler-flags" ldflags
                 "test-dir" "./"
