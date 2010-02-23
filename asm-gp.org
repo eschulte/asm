@@ -890,7 +890,16 @@ new fitness and compilation functions
         (if fit-cache (write-obj fit-cache @fitness-cache)))))
 #+end_src
 
-* Tasks [15/26]
+* Tasks [15/27]
+** TODO beamer presentation for Wes
+   DEADLINE: <2010-02-26 Fri>
+   - State "TODO"       from ""           [2010-02-23 Tue 12:49]
+
+- java bugs
+- C bugs w/transposed arguments
+- issues running this stuff -- hanging processes, reaper
+- ICSE experiments
+
 ** TODO write a script wrapper for shell script execution
    - State "TODO"       from ""           [2010-02-06 Sat 12:35]
 
