@@ -11,9 +11,9 @@ end
 def and_descendants(pid)
   %x{ps -axo pid,ppid |grep -i #{pid}}.split("\n").map{|l| $1 if l.match(/^([\d]+)[\s]+([\d]+)/)}
 end
-old_procs = []
+old = []
 while true do
-  variants.select{|p| old_procs.include?(p)}.each{|p| p.and_descendants.each{|p| %x{kill -9 #{p}}}}
-  old_procs = variant_procs
+  variants.select{|p| old.include?(p)}.each{|p| p.and_descendants.each{|p| %x{kill -9 #{p}}}}
+  old = variants
   sleep 4
 end
