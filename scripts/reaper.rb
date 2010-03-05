@@ -6,7 +6,9 @@
 ##    |/_\
 ##
 def variants
-  %x{ps auxwww |grep -i "tmp/variant"}.split("\n").map{|l| $1 if l.match(/^[\S]+[\s]+([\d]+)[\s]+/)}.compact
+  ["tmp/variant", "exec_bad", "exec_good"].map do |pattern|
+    %x{ps auxwww |grep -i pattern}.split("\n").map{|l| $1 if l.match(/^[\S]+[\s]+([\d]+)[\s]+/)}.compact
+  end.flatten
 end
 def and_descendants(pid)
   %x{ps ax -o pid,ppid |grep -i #{pid}}.split("\n").map{|l| $1 if l.match(/^([\d]+)[\s]+([\d]+)/)}.compact
