@@ -16,7 +16,7 @@ def variants
   end.flatten
 end
 def and_descendants(pid)
-  %x{ps ax -o pid,ppid |grep -i #{pid}}.split("\n").map{|l| $1 if l.match(/^([\d]+)[\s]+([\d]+)/)}.compact
+  %x{ps ax -o pid,ppid |grep -i #{pid}}.split("\n").map{|l| $1 if l.match(/^[\s]*([\d]+)[\s]+([\d]+)/)}.compact
 end
 old = []
 while true do
