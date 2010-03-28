@@ -9,72 +9,23 @@
   :j-file:   index
   :END:
 ** Introduction
-This work uses Genetic Programming (GP) to evolve the assembly (ASM)
-code compiled from existing C programs with the goal of fixing bugs in
-the original C source code.
+This work uses Evolutionary Computation (EC) to evolve the assembly
+(ASM) code compiled from existing programs with the goal of fixing
+bugs in the original source code.
 
-All [[file:code.org::gp-operations][GP Operations]] operate directly on the level of the x86 assembly
+All [[file:code.org::gp-operations][GP Operations]] operate directly on the level of the assembly code
 with no intermediate representation.
 
-Unit tests from the original C program are used to assess the fitness
-of evolved variants and determine when the bug has successfully been
+Unit tests from the original program are used to assess the fitness of
+evolved variants and determine when the bug has successfully been
 repaired.
 
 This project is implemented entirely in [[http://clojure.org][clojure]], a lisp which runs on
 the Java Virtual Machine and has a robust infrastructure for
 multithreaded programming.
 
-Read more [[file:./about.html][about ASM-GP]].
-
-** Experiments
-#+begin_html 
-  <ul>
-    {% for post in site.categories.experiment limit:10 %}
-    <li>
-      <a href=".{{ post.url }}">{{ post.title }}</a>
-    </li>
-    {% endfor %}
-  </ul>
-#+end_html
-
-** Tasks
-#+begin_html 
-  <ul>
-    {% for post in site.categories.task limit:10 %}
-    <li>
-      <a href=".{{ post.url }}">{{ post.title }}</a>
-    </li>
-    {% endfor %}
-  </ul>
-#+end_html
-
-* About
-  :PROPERTIES:
-  :j-file:   about
-  :END:
-This work extends the [[http://genprog.adaptive.cs.unm.edu/][genprog]] methodology to operate directly on the
-the assembly code compiled from extant C programs.
-
-The main motivation for moving from C to ASM is the observation that
-the current genprog technique is constrained by it's large step size.
-A change of even a single line of C source code can have a drastic
-effect on the behavior of the program -- as evidenced by the fact that
-genprog runs often progress from the baseline individual to the
-solution in a single step.  As our fitness functions improve to supply
-more incremental fitness values the benefits of a representation like
-ASM which admits smaller steps in the fitness space may become more
-pronounced.
-
-ASM offers additional advantages of
-- this technique could be applied to any program which compiles to x86
-  assembly greatly increasing the range of fixable programs -- also,
-  since the ASM representation is currently not tailored to x86
-  assembly it should be equally applicable to other assembly languages
-  like Java Bytecode which runs on the Java Virtual Machine
-- the greater simplicity of ASM code vs. C code
-- the consistent scope of ASM code which has no local variables make
-  code reuse more practical both within an individual ASM file and
-  across separate bug repairs
+This page is intended to enable reproduction of this work.  Both the
+[[file:code.org][source code]] and [[file:instructions.org][instructions for reproduction]] are provided.
 
 * Code
   :PROPERTIES:
@@ -85,15 +36,15 @@ ASM offers additional advantages of
   :comments: no
   :ID:       2c73652b-b0aa-4770-b431-e58f558a0bd5
   :END:
-To use this code, evaluate this subtree in your slime session.
+To use this code, evaluate this subtree in your Clojure repl.
 1) tangle out a clojure file by calling `org-babel-tangle'
-2) load the file in your slime buffer
+2) load the file in your repl
    #+begin_src clojure :tangle no
      (load-file "src/asm-gp.clj")
      (in-ns 'asm-gp)
    #+end_src
-3) try out one of the scenarios in [[usage]]
-   
+3) follow the steps described in the [[file:instructions.org][instructions]]
+
 ** Namespace and included libraries
    :PROPERTIES:
    :ID:       6704f70c-b95e-4085-bf4e-f17c351fd01d
@@ -109,6 +60,10 @@ To use this code, evaluate this subtree in your slime session.
 #+end_src
 
 ** Utility functions
+   :PROPERTIES:
+   :CUSTOM_ID: utility-functions
+   :END:
+
 *** macros
     :PROPERTIES:
     :ID:       ddde78da-0567-4ae9-802f-41f289ed87aa
@@ -163,16 +118,16 @@ timeout long-running commands
   (defn shuffle
     "Shuffles coll using a Java ArrayList." [coll]
     (let [l (ArrayList. coll)] (Collections/shuffle l) (seq l)))
-  
+
   (defn place
     "Pick a random location from a sequence"
     [lst]
     (rand-int (.size lst)))
-  
+
   (defn pick
     "Pick and return a random element from a sequence."
     [lst] (nth lst (place lst)))
-  
+
   (defn weighted-place
     "Pick a random location in an asm individual weighted by the
      associated bad-path."
@@ -187,7 +142,7 @@ timeout long-running commands
               (rest asm)
               (concat (repeat (m/ceil (or (weight-key (first asm)) 0)) index) assoc))))
          0 asm (range (.size asm))))))
-  
+
   (defn weighted-pick
     "Return a random element in an asm individual weighted by the
      associated bad-path"
@@ -212,7 +167,7 @@ timeout long-running commands
                      el)})
           (f/read-lines path))
      :compile nil :fitness nil :trials nil :operations nil})
-  
+
   (defn write-asm
     [f asm]
     (f/write-lines
@@ -250,6 +205,10 @@ timeout long-running commands
 #+end_src
 
 ** Assembly Manipulation
+   :PROPERTIES:
+   :CUSTOM_ID: assembly-manipulation
+   :END:
+
 *** read a path
     :PROPERTIES:
     :ID:       71b8ce66-5b52-409f-b338-74e39f6849a8
@@ -269,7 +228,7 @@ smooth out the weight of a good/bad path
     :PROPERTIES:
     :ID:       c658d230-db3c-43f0-92be-a3a42023e8ca
     :END:
-#+begin_src clojure  
+#+begin_src clojure
   (defn smooth-path
     "Smooth the given path by blurring with a 1-D Gaussian, then taking
     the log of all values -- with a min value of 1 for each
@@ -284,7 +243,7 @@ smooth out the weight of a good/bad path
             (reduce
              (fn [a f]
                (let [place (+ (first el) (first f))]
-                 (assoc a place 
+                 (assoc a place
                         (+ (get a place 0)
                            (* (second f) (second el))))))
              accum kernel)) {}
@@ -661,7 +620,7 @@ new functions for reading and writing assembly files
     :PROPERTIES:
     :ID:       1734877f-c8ed-40d6-949d-ef4675064f16
     :END:
-#+begin_src clojure  
+#+begin_src clojure
   (defn write-asm
     "Write a list of Byte-code instructions to a file.  Return f if the
     write was successful, and nil otherwise." [f lst]
@@ -705,7 +664,7 @@ select places and instruction from lists of instruction lists
     [instrs]
     (let [meth_num (rand-int (.size instrs))]
       (list meth_num (rand-int (.size (nth instrs meth_num))))))
-  
+
   (defn instrs-pick
     "Pick an instruction from a list of instruction lists."
     [instrs place]
@@ -758,7 +717,7 @@ select places and instruction from lists of instruction lists
     :PROPERTIES:
     :ID:       4a364d84-efc3-4750-9669-b235306e6e78
     :END:
-#+begin_src clojure  
+#+begin_src clojure
   (defn delete-asm
     "Remove an instruction from list InstructionList.  Not Weighted"
     ([asm _] (delete-asm asm))
@@ -827,11 +786,11 @@ new fitness and compilation functions
      [java?       "operate on a Java .class file"]
      [class-nest  "class directory nesting for java .class files"]
      rest]
-  
+
     ;; ;; over-define some functions for working with Java .class files
     ;; (when java?
     ;;   (load-file "/home/eschulte/research/genprog/asm/src/bytecode-gp.clj"))
-    
+
     ;; define GP parameters
     (let [to_int (fn [in] (if (string? in)
                             (Integer/parseInt in)
@@ -853,7 +812,7 @@ new fitness and compilation functions
       (def test-good good)
       (def test-bad bad)
       (def java-class-nest class-nest))
-  
+
     ;; save configuration to file
     (write-obj "config.clj"
                (list
@@ -872,7 +831,7 @@ new fitness and compilation functions
                 "test-timeout" 2000
                 "test-good" good
                 "test-bad" bad))
-  
+
     ;; run evolution
     (doseq [baseline-path rest]
       (let [fitness-cache (ref (if fit-cache (read-obj fit-cache) {}))
@@ -890,7 +849,155 @@ new fitness and compilation functions
         (if fit-cache (write-obj fit-cache @fitness-cache)))))
 #+end_src
 
-* Tasks [17/27]
+* Instructions
+  :PROPERTIES:
+  :j-file:   instructions
+  :END:
+
+The following steps can be followed to repair a buggy program at the
+assembly level.  Not that this process involves the execution of
+arbitrary assembly code, which can be *very* harmful.  It is
+recommended that all of the following steps take place inside of a
+virtual machine.
+
+The following will operate upon a simple buggy implementation of
+Euclid's algorithm for the greatest common divisor.  This will require
+obtaining the code and support files, configuring a working clojure
+instillation, performing fault localization to isolate buggy portions
+of the ASM file, running evolution of new program variants until a
+solution is found.
+
+1) The source-code and all support files are available at
+   [[file:asm-gp.tar.bz2][asm-gp.tar.bz2]].
+
+2) See [[http://clojure.org/getting_started]] for information on
+   configuring a working Clojure environment on your machine.
+
+3) Once the code is installed on your machine, unpack the =gcd=
+   directory.  This directory should include the following,
+   #+begin_example
+     $ ls gcd
+     gcd.c        output.1071.1029     output.555.666  output.8767.653  test-good.sh
+     output.0.55  output.16777216.512  output.678.987  test-bad.sh
+   #+end_example
+   including the buggy program (=gcd.c=), shell scripts for executing
+   the good and bad test cases respectively (=test-good.sh=,
+   =test-bad.sh=), and a number of files containing the correct output
+   for various inputs (=output.*=).
+   
+   Compile the buggy program to assembly code using the [[http://gcc.gnu.org/][Gnu C Compiler]].
+   : gcc -S gcd.c
+   
+   Compile an executable from the resulting assembly
+   : gcc -o gcd gcd.s
+
+4) Now install [[http://oprofile.sourceforge.net/news/][oprofile]], which will be used for fault localization.
+   On Debian systems =oprofile= can be installed with
+   : apt-get install oprofile
+
+   First =oprofile= must be started with something like the following.
+   : opcontrol --start
+   
+   Once started =oprofile= will begin taking samples of the program
+   counter(s) in your machine.
+   
+   We will run both the /good/ and /bad/ test cases with
+   =test-good.sh= and =test-bad.sh= respectively with =oprofile=
+   running in the background.  After each of these runs we view the
+   samples with
+   : opannotate --assembly gcd
+
+   the output of that command looks something like
+   #+begin_example
+        1  0.3257 : 804f318:       cmpl   $0x1,-0x10(%ebp)
+        3  0.9772 : 804f31c:       je     804f323 <sgets+0x115>
+                  : 804f31e:       negl   -0xc(%ebp)
+                  : 804f321:       jmp    804f347 <sgets+0x139>
+                  : 804f323:       addl   $0x1,-0xc(%ebp)
+        1  0.3257 : 804f327:       mov    0x8(%ebp),%eax
+                  : 804f32a:       movzbl (%eax),%eax
+                  : 804f32d:       cmp    $0xa,%al
+        1  0.3257 : 804f32f:       jne    804f337 <sgets+0x129>
+                  : 804f331:       addl   $0x1,0x8(%ebp)
+   #+end_example
+   and will be usable for localizing good/bad behavior to the specific
+   assembly instructions in the assembly file (=gcd.s=).  The mapping
+   from memory addresses to assembly instructions is generated using
+   the =mem-mapping.clj= script included in the scripts directory
+   distributed with this project.  This mapping is generated with the
+   following command
+   : clj ../mem-mapping.clj gcd.s gcd
+   
+   Putting this all together yields the following sequence of steps
+   which should be performed for both the good and bad tests (good
+   shown).
+   1) stop the daemon
+      : sudo opcontrol --shutdown
+   2) clear out old information
+      : sudo opcontrol --reset
+   3) start up the daemon
+      : sudo opcontrol --start
+   4) run the good test 50 times
+      #+begin_src sh
+        for i in `seq 10`; do
+            j=`expr $i - 1`
+            ./test-good.sh ./null output 401$j
+        done
+      #+end_src
+   5) convert the memory addresses to lines in the assembly file and
+      save the results in the file =good.path=
+      : opannotate --assembly null | clj ../opannotate-to-path.clj > good.path
+
+5) Once the good and bad path files have been created the actual
+   evolution of program variants can begin.  Once again it is worth
+   mentioning that this step should be performed inside of a virtual
+   machine as arbitrary assembly code will be executed, and will in
+   all likelihood take actions which would be considered malicious one
+   inclined to assign motives to artifacts of random mutation.
+   
+   The =modify.clj= script controls the entire evolution process.
+   It's build-in help command should be sufficient to describe it's
+   usage.  As with the rest of this project, everything should be
+   considered to be in early alpha development, and the source-code is
+   the ultimate form of documentation.
+   #+begin_example
+     $ modify.clj --help
+     Prototype No-Specification Machine-code-level Bug-Fixer
+             modify [opts] baseline.s
+     Options
+       --gcc <arg>          use X to compile C files                              [default gcc]           
+       --ldflags <arg>      use X as LDFLAGS when compiling                                               
+       --good <arg>         use X as good-test command                            [default ./test-good.sh]
+       --bad <arg>          use X as bad-test command                             [default ./test-bad.sh] 
+       --bad-factor <arg>   multiply 'bad' testcases by X for utility             [default 5]             
+       --good-factor <arg>  multiply 'good' testcases by X for utility            [default 1]             
+       --sanity-test <arg>  sanity fitness of baseline individual                                         
+       --max <arg>          best fitness possible is X                            [default 10]            
+       --fit-cache <arg>    path to the fitness cache                                                     
+       --good-path <arg>    file specifying the good path                         [default good.path]     
+       --bad-path <arg>     file specifying the good path                         [default bad.path]      
+       --pop <arg>          use population size of X                              [default 40]            
+       --gen <arg>          use X genetic algorithm generations                   [default 10]            
+       --sect-size <arg>    mutate over sections of X instructions                [default 1]             
+       --ins <arg>          relative chance of mutation insertion                 [default 1]             
+       --del <arg>          relative chance of mutation deletion                  [default 1]             
+       --swap <arg>         relative chance of mutation swap                      [default 1]             
+       --cross-rate <arg>   percentage of population generated through crossover  [default 0.1]           
+       --tour               use tournament selection for sampling                                         
+       --tour-size <arg>    tournament size                                       [default 3]             
+       --java               operate on a Java .class file                                                 
+       --class-nest <arg>   class directory nesting for java .class files                                 
+   #+end_example
+   An example usage may look like the following.
+   : nice modify.clj --tour --tour-size 3 --cross-rate 0.1 --pop 400 gcd.s
+   
+   After each generation the best individual will be written to a
+   =.clj= file of Clojure source code.  These individuals can be
+   loaded into a Clojure repl from which they can be inspected, and
+   can be written to assembly files (see [[file:code.org::assembly-manipulation][Assembly Manipulation]] and
+   [[file:code.org::utility-functions][Utility Functions]]).
+   
+* COMMENT Tasks [17/27]
 ** DONE script for collecting stats from many "bests"
    - State "DONE"       from "TODO"       [2010-02-25 Thu 20:28]
    - State "TODO"       from ""           [2010-02-25 Thu 20:16]
@@ -900,18 +1007,18 @@ new fitness and compilation functions
 
 #+begin_src clojure :shebang #! /usr/bin/env clj
   (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
-  
+
   (def ops {:swap 0 :delete 0 :append 0 :crossover 0})
   (def opsize 0)
   (def total 0)
   (def trials 0)
-  
+
   (defn ingest-ops [operations]
     (doseq [op operations]
       (if (list? op)
         (ingest-ops op)
         (def ops (assoc ops op (inc (op ops)))))))
-  
+
   (while-let
    [line (read-line)]
    (when-let [best (read-obj line)]
@@ -919,7 +1026,7 @@ new fitness and compilation functions
      (def trials (+ trials (:trials best)))
      (def opsize (+ opsize (.size (:operations best))))
      (ingest-ops (:operations best))))
-  
+
   (println "total" total (/ total total))
   (println "trials" trials (/ trials total))
   (println "opsize" opsize (/ opsize total))
@@ -972,7 +1079,7 @@ Ah, there's a much better solution
 #+begin_src clojure
   (defmacro time-limited [ms & body]
     `(let [f# (future ~@body)]
-       (.get f# ~ms java.util.concurrent.TimeUnit/MILLISECONDS)))  
+       (.get f# ~ms java.util.concurrent.TimeUnit/MILLISECONDS)))
 #+end_src
 from [[http://stackoverflow.com/questions/1683680/clojure-with-timeout-macro][stackoverflow:clojure-with-timeout-macro]]
 
@@ -1002,7 +1109,7 @@ subscribed to bcel-user-subscribe@jakarta.apache.org
                  (.append lst
                           (nth handles 14)
                           (.getInstruction (last handles)))
-                 lst))  
+                 lst))
 #+end_src
 
 ** TODO java good/bad paths
@@ -1021,7 +1128,7 @@ should try all of these
 ** TODO compare effect of statistical vs. full paths
    - State "TODO"       from ""           [2010-01-21 Thu 21:06]
 
-#+begin_quote 
+#+begin_quote
   oprofile is a nice idea. You've sidesteped one implementation
   bottleneck. However, oprofile is statistical and not
   deterministic. One experiment you may want to run (or one threat to
@@ -1074,7 +1181,7 @@ new functions for reading and writing assembly files
                       (.getClassName class)
                       (.getConstantPool class))]
       (.getInstructionList method)))
-  
+
   (defn write-asm
     "Write a list of Byte-code instructions to a file." [f lst]
     (if (not base-class)
@@ -1109,7 +1216,7 @@ over-defining all GP operations for InstructionLists
                    (.getInstruction (pick handles)))
           (catch Exception e nil))
          lst)))
-  
+
   (defn delete-asm
     "Remove an instruction from list InstructionList.  Not Weighted"
     ([lst _] (delete-asm lst))
@@ -1120,7 +1227,7 @@ over-defining all GP operations for InstructionLists
           (.delete lst (pick handles))
           (catch Exception e nil))
          lst)))
-  
+
   (defn swap-asm
     "Swap two instructions in this InstructionList.  Not Weighted."
     ([lst _] (swap-asm lst))
@@ -1166,7 +1273,7 @@ lazily evaluated -- thanks to =jcromartie= and =lpetit= from
                       (second (.getMethods cls))
                       (.getMethod mth))
       (.dump (.getJavaClass cls) f)))
-  
+
   (defn list-expand [asm]
     (with-local-vars [lst (new InstructionList)
                       cls (new ClassGen base-class)
@@ -1176,11 +1283,11 @@ lazily evaluated -- thanks to =jcromartie= and =lpetit= from
       (dorun (map #(.append (var-get lst) %) asm))
       (.setPositions (var-get lst) false)
       (var-get lst)))
-  
-  
-  
-  
-  
+
+
+
+
+
   (map #(.append lst %) baseline)
 #+end_src
 
@@ -1265,7 +1372,7 @@ Java provides a number of tools for the generation and inspection of
 - =javap= can be used to disassemble the resulting class file
   : javap -c gcd
   outputs the following list of the java bytecode instructions
-  #+begin_example 
+  #+begin_example
     javap -c gcd
     Compiled from "gcd.java"
     class gcd extends java.lang.Object{
@@ -1274,17 +1381,17 @@ Java provides a number of tools for the generation and inspection of
        0:   aload_0
        1:   invokespecial   #1; //Method java/lang/Object."<init>":()V
        4:   return
-    
+
     public static void main(java.lang.String[]);
       Code:
        0:   getstatic       #2; //Field java/lang/System.out:Ljava/io/PrintStream;
        3:   ldc     #3; //String Hello World!
        5:   invokevirtual   #4; //Method java/io/PrintStream.println:(Ljava/lang/String;)V
        8:   return
-    
+
     }
   #+end_example
-  
+
 now how to get from this pretty printed byte-code output to a loadable
 =.class= file...
 
@@ -1308,7 +1415,7 @@ finally able to read in a =.class= file with
    - State "TODO"       from ""           [2010-01-20 Wed 10:31]
 
 from http://www.linuxjournal.com/article/4860
-#+begin_quote 
+#+begin_quote
   Examples of free projects using Java include Jakarta from the Apache
   Foundation (jakarta.apache.org), various XML tools from W3C
   (www.w3.org) and Freenet (freenet.sourceforge.net). See also the
@@ -1401,13 +1508,13 @@ compiled binary.  The mapping is written to =mapping.clj=.
 #+source: mem-to-asm
 #+begin_src clojure :shebang #! /usr/bin/env clj
   (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
-  
+
   (def asm-file (:representation (read-asm (second *command-line-args*))))
   (message "asm file: %s %d lines" (second *command-line-args*) (.size asm-file))
   (def bin-file (nth *command-line-args* 2))
   (message "bin-file: %s" bin-file)
   (def mapping {})
-  
+
   (defn function-lines [asm]
     (filter identity
             (map #(and (string? %)
@@ -1418,7 +1525,7 @@ compiled binary.  The mapping is written to =mapping.clj=.
     "Takes the path to a binary, and the name of the symbol to be
     disassembled."  [path function]
     (s/sh "gdb" "--batch" (format "--eval-command=disassemble %s" function) path))
-  
+
   (dorun
    (map ;; for every function defined in the file
     (fn [func]
@@ -1441,7 +1548,7 @@ compiled binary.  The mapping is written to =mapping.clj=.
              (def pointer (inc pointer)))
           lines))))
     (function-lines asm-file)))
-  
+
   (write-obj "mapping.clj" mapping)
 #+end_src
 
@@ -1456,9 +1563,9 @@ the output of =opannotate= through a pipe.
 
 #+begin_src clojure :shebang #! /usr/bin/env clj
   (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
-  
+
   (def mapping (read-obj "mapping.clj"))
-  
+
   (while-let
    [line (read-line)]
    ;;     10 27.7778 : 804ba03:
@@ -1540,13 +1647,13 @@ try using [[http://oprofile.sourceforge.net/]]
 
 Better consistent hashing
 - hash fitness by sha1 of individual rather than full asm
-  
+
   this can be accomplished using Java's =.hashCode= method directly on
   an individual
   #+begin_src clojure
     (.hashCode basline)
   #+end_src
-  
+
 - persist fitness hash on disk between runs, can be accomplished by
   explicitly loading and saving the fitness-cache from a specified
   location, lets say... "~/research/code/data/fitness-cache.clj"
@@ -1602,13 +1709,13 @@ to
 
 will print the time taken to run the command to STDERR, so for example
 the output of a working gcd will be
-#+begin_example 
+#+begin_example
 real    0m0.006s
 user    0m0.004s
-sys     0m0.004s  
+sys     0m0.004s
 #+end_example
 and the output of a broken infinite-loop gcd will be
-#+begin_src 
+#+begin_src
 real    0m0.998s
 user    0m1.004s
 sys     0m0.000s
@@ -1652,10 +1759,10 @@ following
                         path
                         (format "%s.c" path)
                         :dir (f/file-str dir))) source-basenames)
-  
+
   (comment ;; to train against these sources
     (train (map read-asm sources) 4)
-    )  
+    )
 #+end_src
 
 ** DONE find a "bad path" -- profiling assembly files
@@ -1691,7 +1798,7 @@ Writing a simple gdb script [[file:data/asm-profile.gdb][asm-profile.gdb]] which
 : gdb gcd -batch -x data/asm-profile.gdb |grep -e "in main ()" > output
 
 it looks like
-#+begin_example 
+#+begin_example
   disassemble main
   break main
   run 0 55
@@ -1725,17 +1832,17 @@ this script will
 
 #+begin_src clojure :shebang #! /usr/bin/env clojure
   (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
-  
+
   (def asm-file (read-asm (second *command-line-args*)))
-  
+
   (def pointer 0)
-  
+
   (while (not (= "main:" (:line (nth asm-file pointer))))
          (def pointer (inc pointer)))
   (def pointer (inc pointer))
-  
+
   (def mapping {})
-  
+
   (while-let
    [line (read-line)]
    ;; build up the mapping
@@ -1866,7 +1973,7 @@ not an easy consistent mapping.
 |     |         |
 
 #+begin_src clojure :session asm-gp :var gdb=gdb-disassemble-output
-  (def gdb gdb)  
+  (def gdb gdb)
 #+end_src
 
 ** DONE effectively use good and bad paths
@@ -1904,7 +2011,7 @@ not an easy consistent mapping.
                    (map #(Integer/parseInt %) (f/read-lines "data/bad.path")))
            (map #(Integer/parseInt %) (f/read-lines "data/good.path"))))
    #+end_src
-   
+
 3) Then we apply this path to our baseline individual.  See [[apply-path]]
    #+begin_src clojure
      (def baseline (apply-path (read-asm "gcd.s") :bad-weight bad-path))
@@ -1964,7 +2071,7 @@ to resolve this issue I'm going to try two things
         (fn [accum el]
           (reduce ;; for each part of the kernel
            #(let [place (+ (first el) (first %2))]
-              (assoc %1 place 
+              (assoc %1 place
                      (+ (get %1 place 0)
                         (* (second %2) (second el)))))
            accum kernel))
@@ -2021,13 +2128,13 @@ of replacement code.
               (fn [accum el]
                 (reduce ;; for each part of the Gaussian kernel
                  #(let [place (+ (first el) (first %2))]
-                    (assoc %1 place 
+                    (assoc %1 place
                            (+ (get %1 place 0)
                               (* (second %2) (second el)))))
                  accum kernel)) {}
                  good-path))))
    #+end_src
-   
+
    resulting in the following change
    | before                  | after                            |
    |-------------------------+----------------------------------|
@@ -2069,7 +2176,7 @@ other programs but it is encouraging.
    #+end_src
 
 For some reason this doesn't really seem to help.
-   
+
 *** code -- ASM command pattern profiles
 Learning what patterns of commands are actually used in assembly files
 which are generated from C source code.
@@ -2163,7 +2270,7 @@ now with the "times length squared" portion removed
 Run the supplied GP operation =tournament-size= times and select the
 tournament winner as the variant with the highest pattern similarity
 rating.
-#+begin_src clojure  
+#+begin_src clojure
   (defn better-gp-op
     "Run the supplied GP operation =tournament-size= times and select
   the tournament winner as the variant with the highest pattern
@@ -2312,7 +2419,7 @@ returns a hash of assembly "commands" and their "arguments"
     :END:
 mutate a *single* command
 
-#+begin_src clojure  
+#+begin_src clojure
   (defn mut-asm
     ([asm] (mut-asm asm nil))
     ([asm throw-away]
