@@ -2,3 +2,8 @@ scripts/*.clj
 test/*
 src/*
 lib/*
+
+## jekyll cruft
+*.html
+_posts/
+_asm-gp/

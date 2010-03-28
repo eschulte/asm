@@ -1765,7 +1765,7 @@ following
     )
 #+end_src
 
-** DONE find a "bad path" -- profiling assembly files
+** DONE find a bad path -- profiling assembly files
    - State "DONE"       from "DONE"       [2010-01-06 Wed 12:00]
    :PROPERTIES:
    :blog:     t
@@ -2092,7 +2092,7 @@ doctoring has the following effect on the weights of the bad path
 |------------------------+---------------------------------|
 | [[file:data/bad-path.png]] | [[file:data/bad-path-doctored.png]] |
 
-** DONE use a "good" path
+** DONE use a good path
    - State "DONE"       from "TODO"       [2010-01-08 Fri 13:30]
    - State "TODO"       from ""           [2010-01-08 Fri 12:38]
    :PROPERTIES:
