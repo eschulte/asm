@@ -31,7 +31,7 @@ This page is intended to enable reproduction of this work.  Both the
   :PROPERTIES:
   :results:  silent
   :session:  asm-gp
-  :tangle:   src/asm-gp
+  :tangle:   src/asm-gp.clj
   :j-file:   code
   :comments: no
   :ID:       2c73652b-b0aa-4770-b431-e58f558a0bd5
@@ -584,7 +584,7 @@ Stochastic universal Sampling (see [[wiki:Stochastic_universal_sampling]])
 #+end_src
 ** Java Byte-Code Functions
     :PROPERTIES:
-    :tangle:   src/bytecode-gp
+    :tangle:   src/bytecode-gp.clj
     :ID:       fece78b7-5b8c-4510-bffa-f46d73896971
     :END:
 
@@ -763,7 +763,7 @@ new fitness and compilation functions
    :ID:       6b8b61da-cbdf-42d9-bdc8-d681b6cb0ba8
    :END:
 
-#+begin_src clojure :tangle scripts/modify :shebang #! /usr/bin/env clj
+#+begin_src clojure :tangle scripts/modify.clj :shebang #! /usr/bin/env clj
   (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")
   (in-ns 'asm-gp)
   (require ['clojure.contrib.command-line :as 'cmd])
@@ -1011,7 +1011,7 @@ solution is found.
    - State "DONE"       from "TODO"       [2010-02-25 Thu 20:28]
    - State "TODO"       from ""           [2010-02-25 Thu 20:16]
    :PROPERTIES:
-   :tangle:   scripts/bests
+   :tangle:   scripts/bests.clj
    :END:
 
 #+begin_src clojure :shebang #! /usr/bin/env clj
@@ -1505,7 +1505,7 @@ putting this all together to get some paths
 
 *** better =mem-mapping= to lines of asm
     :PROPERTIES:
-    :tangle:   scripts/mem-mapping
+    :tangle:   scripts/mem-mapping.clj
     :CUSTOM_ID: mem-mapping
     :END:
 
@@ -1564,7 +1564,7 @@ compiled binary.  The mapping is written to =mapping.clj=.
 *** =opannotate-to-path=
     :PROPERTIES:
     :CUSTOM_ID: opannotate-to-path
-    :tangle:   scripts/opannotate-to-path
+    :tangle:   scripts/opannotate-to-path.clj
     :END:
 Map output from opannotate to a path in the related asm file.  This
 requires the =mapping.clj= written out by [[mem-mapping]], and it accepts
@@ -1825,7 +1825,7 @@ in the assembly source-code file.
 
 *** mem-to-asm
      :PROPERTIES:
-     :tangle:   scripts/mem-to-asm
+     :tangle:   scripts/mem-to-asm.clj
      :CUSTOM_ID: mem-to-asm
      :END:
 
