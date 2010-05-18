@@ -2092,7 +2092,7 @@ doctoring has the following effect on the weights of the bad path
 #+begin_src clojure :session asm-gp :exports none
   (map #(apply list %) bad-path)
 #+end_src
-#+begin_src gnuplot :var data=doctored-good-path :exports none :file data/doctored-good-path.png
+#+begin_src gnuplot
   set xrange [0:79]
   plot data using 1:2 with boxes notitle
 #+end_src
@@ -2303,7 +2303,7 @@ rating.
      find src -type f -name "*.c" -exec gcc -S {} \;
    #+end_src
 2) then copied the big ones to a boilerplate directory
-   #+begin_src ruby :var data=r-big-s-files
+   #+begin_src ruby
      data.each{|f| system "cp #{f[0]} ~/research/code/boilerplate/" }
    #+end_src
 3) trained a model against these files
