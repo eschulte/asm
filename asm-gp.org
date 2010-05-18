@@ -1006,7 +1006,31 @@ solution is found.
    can be written to assembly files (see [[file:code.org::assembly-manipulation][Assembly Manipulation]] and
    [[file:code.org::utility-functions][Utility Functions]]).
    
-* COMMENT Tasks [17/27]
+* COMMENT Tasks [17/28]
+** TODO look at the effects of good-path subtraction
+   - State "TODO"       from ""           [2010-05-17 Mon 23:04]
+#+begin_src clojure
+  (defn path-diff-at [base]
+    (let [path-base (str "/home/eschulte/research/genprog-experiments/icse-experiments/"
+                         base
+                         "/")
+          good-path (read-path (str path-base "good.path"))
+          bad-path (read-path (str path-base "bad.path"))]
+      (/ (- (count (keys bad-path)) (count (keys (path- bad-path good-path))))
+         (count (keys bad-path)))))
+#+end_src
+
+looks promising
+#+begin_example
+  asm-gp=> (path-diff-at "ultrix-deroff")
+  9/13                 
+  asm-gp=> (path-diff-at "ultrix-look")  
+  7/12
+  asm-gp=> (path-diff-at "ultrix-uniq")
+  2/3
+  asm-gp=> 
+#+end_example
+
 ** DONE script for collecting stats from many "bests"
    - State "DONE"       from "TODO"       [2010-02-25 Thu 20:28]
    - State "TODO"       from ""           [2010-02-25 Thu 20:16]
