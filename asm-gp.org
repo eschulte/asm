@@ -118,16 +118,16 @@ timeout long-running commands
   (defn shuffle
     "Shuffles coll using a Java ArrayList." [coll]
     (let [l (ArrayList. coll)] (Collections/shuffle l) (seq l)))
-
+  
   (defn place
     "Pick a random location from a sequence"
     [lst]
     (rand-int (.size lst)))
-
+  
   (defn pick
     "Pick and return a random element from a sequence."
     [lst] (nth lst (place lst)))
-
+  
   (defn weighted-place
     "Pick a random location in an asm individual weighted by the
      associated bad-path."
@@ -142,7 +142,7 @@ timeout long-running commands
               (rest asm)
               (concat (repeat (m/ceil (or (weight-key (first asm)) 0)) index) assoc))))
          0 asm (range (.size asm))))))
-
+  
   (defn weighted-pick
     "Return a random element in an asm individual weighted by the
      associated bad-path"
@@ -204,16 +204,14 @@ timeout long-running commands
   (def java-class-nest nil)
 #+end_src
 
-** Assembly Manipulation
+** Weighted Path
    :PROPERTIES:
    :CUSTOM_ID: assembly-manipulation
    :END:
-
 *** read a path
     :PROPERTIES:
     :ID:       71b8ce66-5b52-409f-b338-74e39f6849a8
     :END:
-smooth out the weight of a good/bad path
 #+begin_src clojure
   (defn read-path
     "Read the given path giving the raw sum of the value for each
@@ -228,6 +226,7 @@ smooth out the weight of a good/bad path
     :PROPERTIES:
     :ID:       c658d230-db3c-43f0-92be-a3a42023e8ca
     :END:
+smooth out the weight of a good/bad path
 #+begin_src clojure
   (defn smooth-path
     "Smooth the given path by blurring with a 1-D Gaussian, then taking
@@ -248,6 +247,13 @@ smooth out the weight of a good/bad path
                            (* (second f) (second el))))))
              accum kernel)) {}
              path))))
+#+end_src
+
+*** difference between paths
+#+begin_src clojure
+  (defn path-
+    "Subtract one path from another." [left right]
+    (reduce (fn [l r] (dissoc l (first r))) left right))
 #+end_src
 
 *** apply path
@@ -786,11 +792,11 @@ new fitness and compilation functions
      [java?       "operate on a Java .class file"]
      [class-nest  "class directory nesting for java .class files"]
      rest]
-
+  
     ;; ;; over-define some functions for working with Java .class files
     ;; (when java?
     ;;   (load-file "/home/eschulte/research/genprog/asm/src/bytecode-gp.clj"))
-
+  
     ;; define GP parameters
     (let [to_int (fn [in] (if (string? in)
                             (Integer/parseInt in)
@@ -812,7 +818,7 @@ new fitness and compilation functions
       (def test-good good)
       (def test-bad bad)
       (def java-class-nest class-nest))
-
+  
     ;; save configuration to file
     (write-obj "config.clj"
                (list
@@ -831,15 +837,18 @@ new fitness and compilation functions
                 "test-timeout" 2000
                 "test-good" good
                 "test-bad" bad))
-
+  
     ;; run evolution
     (doseq [baseline-path rest]
       (let [fitness-cache (ref (if fit-cache (read-obj fit-cache) {}))
+            good-path (if good-path (read-path good-path) nil)
+            bad-path (if bad-path (read-path bad-path) nil)
+            bad-path (if (and bad-path good-path) (path- bad-path good-path) nil)
             baseline (apply-path
                       (apply-path
                        (read-asm baseline-path)
-                       :good-path (smooth-path (if good-path (read-path good-path) nil)))
-                      :bad-path (smooth-path (if bad-path (read-path bad-path) nil)))]
+                       :good-path (smooth-path good-path))
+                      :bad-path (smooth-path bad-path))]
         ;; (when java?
         ;;   (def base-class (.parse (new org.apache.bcel.classfile.ClassParser baseline-path))))
         ;; sanity check
