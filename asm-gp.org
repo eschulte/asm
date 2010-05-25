@@ -250,6 +250,9 @@ smooth out the weight of a good/bad path
 #+end_src
 
 *** difference between paths
+    :PROPERTIES:
+    :ID:       5034668b-9dc4-4130-8d54-533b49ba2832
+    :END:
 #+begin_src clojure
   (defn path-
     "Subtract one path from another." [left right]
@@ -861,6 +864,7 @@ new fitness and compilation functions
 * Instructions
   :PROPERTIES:
   :j-file:   instructions
+  :ID:       6cdb4aaf-8c46-4bae-85a2-0e567baecadf
   :END:
 
 The following steps can be followed to repair a buggy program at the
@@ -1007,8 +1011,56 @@ solution is found.
    [[file:code.org::utility-functions][Utility Functions]]).
    
 * COMMENT Tasks [17/28]
+** step by step for running through this whole process
+   :PROPERTIES:
+   :ID:       64e5c886-ed5f-4466-80e0-298cffd9d890
+   :END:
+1) compile to asm
+   : gcc -S source.c source.s
+2) generate executable
+   : gcc -o source source.s
+3) generate memory mapping for good/bad paths
+   : clj mem-mapping.clj source.s source
+4) sample execution with =opannotate= for both the good and bad test cases
+   1) stop the daemon
+      : sudo opcontrol --shutdown
+   2) clear out old information
+      : sudo opcontrol --reset
+   3) start up the daemon
+      : sudo opcontrol --start
+   4) run the [good/bad] test 100 times
+      : for i in `seq 100`; do
+      :     ./test-[good/bad].sh ./source /dev/null 2> /dev/null
+      : done
+   5) dump the annotations to lines in the assembly file and save the
+      results in [good/bad].path
+      : opannotate --assembly source\
+      : | clj ../opannotate-to-path.clj > [good/bad].path
+      if =opannotate= hasn't sampled any points it will print the
+      following line
+      : error: no sample files found: profile specification too strict ?
+      in that case, re-run the previous step with an order of
+      magnitude more iterations (e.g. =seq 1000= instead of =seq 100=)
+5) turn off =opcontrol=
+   : sudo opcontrol --shutdown
+6) alright, the preparation is complete.  a single run can be
+   performed with the following command
+   : nice modify.clj --tour --tour-size 2 --pop 400 --cross-rate 0.1 source.s
+   try
+   : modify.clj help
+   for more command line options.
+   
+   alternately a suite of 100 executions can be performed by first
+   creating the variants directory
+   : mkdir variants
+   and then running using the =test-asm.sh= shell script.
+   : test-asm.sh source.s
+
 ** TODO look at the effects of good-path subtraction
    - State "TODO"       from ""           [2010-05-17 Mon 23:04]
+   :PROPERTIES:
+   :ID:       d451e88d-e7ff-4364-a6f5-c0b61fa35b19
+   :END:
 #+begin_src clojure
   (defn path-diff-at [base]
     (let [path-base (str "/home/eschulte/research/genprog-experiments/icse-experiments/"
@@ -1036,6 +1088,7 @@ looks promising
    - State "TODO"       from ""           [2010-02-25 Thu 20:16]
    :PROPERTIES:
    :tangle:   scripts/bests.clj
+   :ID:       60064795-62ef-4161-9d8c-0dc43d590b94
    :END:
 
 #+begin_src clojure :shebang #! /usr/bin/env clj
@@ -1540,14 +1593,15 @@ compiled binary.  The mapping is written to =mapping.clj=.
 : clj mem-mapping.clj httpd_comb.s nullhttpd
 #+source: mem-to-asm
 #+begin_src clojure :shebang #! /usr/bin/env clj
-  (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
-
+  (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")
+  (in-ns 'asm-gp)
+  
   (def asm-file (:representation (read-asm (second *command-line-args*))))
   (message "asm file: %s %d lines" (second *command-line-args*) (.size asm-file))
   (def bin-file (nth *command-line-args* 2))
   (message "bin-file: %s" bin-file)
   (def mapping {})
-
+  
   (defn function-lines [asm]
     (filter identity
             (map #(and (string? %)
@@ -1557,8 +1611,9 @@ compiled binary.  The mapping is written to =mapping.clj=.
   (defn gdb-disassemble
     "Takes the path to a binary, and the name of the symbol to be
     disassembled."  [path function]
-    (s/sh "gdb" "--batch" (format "--eval-command=disassemble %s" function) path))
-
+    (s/sh "gdb" "--batch"
+          (format "--eval-command=disassemble %s" function) path))
+  
   (dorun
    (map ;; for every function defined in the file
     (fn [func]
@@ -1571,7 +1626,8 @@ compiled binary.  The mapping is written to =mapping.clj=.
         (message "\t%s:%d %d lines" func (dec pointer) (.size lines))
         (dorun
          (map ;; build up the mapping of memory address to LOC
-          #(when-let [matches (re-matches #"([\w]+) <[\w]+\+([\d]+)>:.*" %)]
+          #(when-let [matches (re-matches
+                               #"[\s]*([\w]+)[\s]*<[\w+]*\+([\d]+)>:.*" %)]
              ;; step past .L lines which aren't noticed by gdb
              (while (and (string? (:line (nth asm-file pointer nil)))
                          (re-matches #"\.L.+" (:line (nth asm-file pointer nil))))
@@ -1581,7 +1637,7 @@ compiled binary.  The mapping is written to =mapping.clj=.
              (def pointer (inc pointer)))
           lines))))
     (function-lines asm-file)))
-
+  
   (write-obj "mapping.clj" mapping)
 #+end_src
 
