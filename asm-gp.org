@@ -783,6 +783,7 @@ new fitness and compilation functions
      [fit-cache   "path to the fitness cache"]
      [good-path   "file specifying the good path" "good.path"]
      [bad-path    "file specifying the good path" "bad.path"]
+     [path-sub?   "subtract the good path from the bad path"]
      [pop         "use population size of X" 40]
      [gen         "use X genetic algorithm generations" 10]
      [sect-size   "mutate over sections of X instructions" 1]
@@ -834,6 +835,7 @@ new fitness and compilation functions
                 "bad-mult" bad-factor
                 "good-path" good-path
                 "bad-path" bad-path
+                "path-sub" path-sub?
                 "compiler" gcc
                 "compiler-flags" ldflags
                 "test-dir" "./"
@@ -846,7 +848,9 @@ new fitness and compilation functions
       (let [fitness-cache (ref (if fit-cache (read-obj fit-cache) {}))
             good-path (if good-path (read-path good-path) nil)
             bad-path (if bad-path (read-path bad-path) nil)
-            bad-path (if (and bad-path good-path) (path- bad-path good-path) nil)
+            bad-path (if (and bad-path good-path path-sub?)
+                       (path- bad-path good-path)
+                       bad-path)
             baseline (apply-path
                       (apply-path
                        (read-asm baseline-path)
@@ -1056,11 +1060,11 @@ solution is found.
    and then running using the =test-asm.sh= shell script.
    : test-asm.sh source.s
 
-** TODO look at the effects of good-path subtraction
-   - State "TODO"       from ""           [2010-05-17 Mon 23:04]
+** path difference
    :PROPERTIES:
    :ID:       d451e88d-e7ff-4364-a6f5-c0b61fa35b19
    :END:
+
 #+begin_src clojure
   (defn path-diff-at [base]
     (let [path-base (str "/home/eschulte/research/genprog-experiments/icse-experiments/"
