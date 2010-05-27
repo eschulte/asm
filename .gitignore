@@ -1,6 +1,4 @@
-scripts/*.clj
 test/*
-src/*
 lib/*
 
 ## jekyll cruft
