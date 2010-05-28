@@ -191,6 +191,7 @@ timeout long-running commands
   (def use-tournament false)
   (def max-section-size 1)
   (def crossover-rate 0.1)
+  (def sticky-crossover-rate 0.75)
   (def fitness-cache-path
        (.getPath (f/file-str "~/research/code/data/fitness-cache.clj")))
   (def good-mult 1)
@@ -390,14 +391,36 @@ which here means either delete, append, or swap
     :PROPERTIES:
     :ID:       beb50995-dcf1-4612-848c-7808164be4ac
     :END:
-perform one or two point crossover between two asm individuals
+Two point crossover between two individuals.  Will be /sticky/ with
+probability =sticky-crossover-rate=.
 #+begin_src clojure
   (defn crossover-asm
     "Takes two individuals and returns the result of performing single
     point crossover between then."  [left right]
     {:representation
      (let [left (:representation left) right (:representation right)]
-       (concat (take (weighted-place left) left) (drop (weighted-place right) right)))
+       (if (< (rand) sticky-crossover-rate)
+         ;; homologous crossover -- does taking a mid-point first bias things?
+         (let [mid (weighted-place left)
+               left-l  (take mid left)  left-r  (drop mid left)
+               right-l (take mid right) right-r (drop mid right)
+               mid-l (weighted-place left-l)
+               mid-r (weighted-place left-r)]
+           (concat (take mid-l left-l)
+                   (drop mid-l right-l)
+                   (take mid-r right-r)
+                   (drop mid-r left-r)))
+         ;; traditional 2-point crossover
+         (let [mid-l (weighted-place left)
+               mid-r (weighted-place right)
+               left-l  (take mid-l left)  left-r  (drop mid-l left)
+               right-l (take mid-r right) right-r (drop mid-r right)
+               mid-ll (weighted-place left-l)  mid-lr (weighted-place left-r)
+               mid-rl (weighted-place right-l) mid-rr (weighted-place right-r)]
+           (concat (take mid-ll left-l)
+                   (drop mid-rl right-l)
+                   (take mid-rr right-r)
+                   (drop mid-lr left-r)))))
      :operations (list :crossover (list (:operations left) (:operations right)))
      :compile nil :fitness nil :trials nil})
 #+end_src
