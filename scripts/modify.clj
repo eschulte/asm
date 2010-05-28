@@ -18,11 +18,8 @@
    [path-sub?   "subtract the good path from the bad path"]
    [pop         "use population size of X" 40]
    [gen         "use X genetic algorithm generations" 10]
-   [sect-size   "mutate over sections of X instructions" 1]
-   [ins         "relative chance of mutation insertion" 1]
-   [del         "relative chance of mutation deletion" 1]
-   [swap        "relative chance of mutation swap" 1]
    [cross-rate  "percentage of population generated through crossover" 0.1]
+   [sticky-cross-rate "percentage crossover to be done stickily" 0.75]
    [tour?       "use tournament selection for sampling"]
    [tour-size   "tournament size" 3]
    [java?       "operate on a Java .class file"]
@@ -42,9 +39,11 @@
     (def population-size (to_int pop))
     (def use-tournament tour?)
     (def tournament-size (to_int tour-size))
-    (def max-section-size (to_int sect-size))
     (def crossover-rate (if (string? cross-rate)
                           (Float/parseFloat cross-rate) cross-rate))
+    (def sticky-crossover-rate
+         (if (string? sticky-cross-rate)
+           (Float/parseFloat sticky-cross-rate) sticky-cross-rate))
     (def good-mult (to_int good-factor))
     (def bad-mult (to_int bad-factor))
     (def compiler gcc)
@@ -62,7 +61,8 @@
               "max-generations" gen
               "population-size" pop
               "use-tournament" tour?
-              "max-section-size" sect-size
+              "crossover-rate" crossover-rate
+              "sticky-crossover-rate" sticky-crossover-rate
               "good-mult" good-factor
               "bad-mult" bad-factor
               "good-path" good-path
