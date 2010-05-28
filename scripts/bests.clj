@@ -1,6 +1,4 @@
 #! /usr/bin/env clj
-
-;; [[file:~/research/genprog/asm/asm-gp.org::*script%20for%20collecting%20stats%20from%20many%20bests][block-43]]
 (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
 
 (def ops {:swap 0 :delete 0 :append 0 :crossover 0})
@@ -26,4 +24,3 @@
 (println "trials" trials (/ trials total))
 (println "opsize" opsize (/ opsize total))
 (println "ops" ops)
-;; block-43 ends here

@@ -1,6 +1,4 @@
 #! /usr/bin/env clj
-
-;; [[file:~/research/genprog/asm/asm-gp.org::#opannotate-to-path][block-57]]
 (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
 
 (def mapping (read-obj "mapping.clj"))
@@ -15,4 +13,3 @@
                                (mapping (format "0x0%s" (nth match 3))))]
                (println line)))
      (range (Integer/parseInt (nth match 1)))))))
-;; block-57 ends here

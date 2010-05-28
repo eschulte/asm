@@ -1,6 +1,4 @@
 #! /usr/bin/env clojure
-
-;; [[file:~/research/genprog/asm/asm-gp.org::#mem-to-asm][block-63]]
 (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
 
 (def asm-file (read-asm (second *command-line-args*)))
@@ -27,4 +25,3 @@
  ;; apply the mapping
  (when-let [hex (second (re-matches #"([\w]+) in main \(\)" line))]
    (println (mapping hex))))
-;; block-63 ends here

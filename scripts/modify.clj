@@ -1,6 +1,4 @@
 #! /usr/bin/env clj
-
-;; [[file:~/research/genprog/asm/asm-gp.org::*%20modify%20shell%20script][block-40]]
 (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")
 (in-ns 'asm-gp)
 (require ['clojure.contrib.command-line :as 'cmd])
@@ -97,4 +95,3 @@
         (assert (= (:fitness (evaluate-asm baseline)) sanity-test)))
       (evolve baseline)
       (if fit-cache (write-obj fit-cache @fitness-cache)))))
-;; block-40 ends here

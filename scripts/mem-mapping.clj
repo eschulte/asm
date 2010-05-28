@@ -1,6 +1,4 @@
 #! /usr/bin/env clj
-
-;; [[file:~/research/genprog/asm/asm-gp.org::#mem-mapping][mem-to-asm]]
 (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")
 (in-ns 'asm-gp)
 
@@ -47,4 +45,3 @@
   (function-lines asm-file)))
 
 (write-obj "mapping.clj" mapping)
-;; mem-to-asm ends here
