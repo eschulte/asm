@@ -1,5 +1,4 @@
 #+TITLE: ASM-GP: Assembly Genetic Programming
-#+TODO: TODO(t!) HOLD(h!) STARTED(s!) | DONE(d!)
 #+OPTIONS: num:nil ^:nil
 #+LaTeX_CLASS: normal
 #+STARTUP: hideblocks
@@ -1037,7 +1036,7 @@ solution is found.
    can be written to assembly files (see [[file:code.org::assembly-manipulation][Assembly Manipulation]] and
    [[file:code.org::utility-functions][Utility Functions]]).
    
-* COMMENT Tasks [17/28]
+* COMMENT Tasks [25/27]
 ** step by step for running through this whole process
    :PROPERTIES:
    :ID:       64e5c886-ed5f-4466-80e0-298cffd9d890
@@ -1228,17 +1227,21 @@ subscribed to bcel-user-subscribe@jakarta.apache.org
 ** TODO java good/bad paths
    - State "TODO"       from ""           [2010-01-22 Fri 16:08]
 
-** TODO repair something that can't be repaired currently
+** DONE repair something that can't be repaired currently
    - State "TODO"       from ""           [2010-01-21 Thu 21:21]
 
 something like transposed arguments, wrong type declaration, etc...
 
-** TODO reproduce repairs for the ICSE experiments
+this has been done on sendmail
+
+** DONE reproduce repairs for the ICSE experiments
    - State "TODO"       from ""           [2010-01-21 Thu 21:19]
 
-should try all of these
+should try all of these -- see [[file:~/research/genprog/genprog.org]]
 
-** TODO compare effect of statistical vs. full paths
+** CANCELED compare effect of statistical vs. full paths
+   - State "CANCELED"   from "TODO"       [2010-05-28 Fri 17:46] \\
+     this todo is now located in the genprog.org file
    - State "TODO"       from ""           [2010-01-21 Thu 21:06]
 
 #+begin_quote
@@ -1524,7 +1527,9 @@ finally able to read in a =.class= file with
 #+begin_src clojure
   (new gnu.bytecode.ClassFileInput (java.io.FileInputStream. "gcd_java/gcd.class"))
 #+end_src
-** TODO find java bugs in open-source software
+** CANCELED find java bugs in open-source software
+   - State "CANCELED"   from "TODO"       [2010-05-28 Fri 17:47] \\
+     this todo is now tracked in genprog.org
    - State "TODO"       from ""           [2010-01-20 Wed 10:31]
 
 from http://www.linuxjournal.com/article/4860
@@ -1774,10 +1779,10 @@ Better consistent hashing
   explicitly loading and saving the fitness-cache from a specified
   location, lets say... "~/research/code/data/fitness-cache.clj"
 
-** TODO expand some big programs
+** DONE expand some big programs
 see how the asm scales with the size of the C program
 
-** TODO more literature review
+** DONE more literature review
    - State "TODO"       from ""           [2010-01-13 Wed 09:23]
 - [[file:data/ksplice.pdf][ksplice.pdf]] look in the references of this paper (skim notes)
 
@@ -2273,7 +2278,9 @@ runs*, which is a drastic improvement over all previous attempts.  I
 guess it remains to be seen how well this improvement transfers to
 other programs but it is encouraging.
 
-** STARTED bias GP operations towards common command patterns
+** CANCELED bias GP operations towards common command patterns
+   - State "CANCELED"   from "STARTED"    [2010-05-28 Fri 17:48] \\
+     this doesn't help, better to leave the instructions as atomic units
    - State "STARTED"    from "DONE"       [2010-01-01 Fri 12:00]
    :PROPERTIES:
    :exports:  code
@@ -2474,7 +2481,9 @@ default is
 
 : java -Xms32m -Xmx128m
 
-** HOLD new genetic operators "mutation" and "crossover"
+** CANCELED new genetic operators "mutation" and "crossover"
+   - State "CANCELED"   from "HOLD"       [2010-05-28 Fri 17:49] \\
+     don't really need this
    - State "HOLD"       from "HOLD"       [2010-01-15 Fri 10:37]
 
 These have been pulled out in order for a clean comparison with
