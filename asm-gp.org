@@ -395,33 +395,38 @@ probability =sticky-crossover-rate=.
 #+begin_src clojure
   (defn crossover-asm
     "Takes two individuals and returns the result of performing single
-    point crossover between then."  [left right]
+    point crossover between then."  [mother father]
     {:representation
-     (let [left (:representation left) right (:representation right)]
+     (let [mother (:representation mother) father (:representation father)]
        (if (< (rand) sticky-crossover-rate)
          ;; homologous crossover -- does taking a mid-point first bias things?
-         (let [mid (weighted-place left)
-               left-l  (take mid left)  left-r  (drop mid left)
-               right-l (take mid right) right-r (drop mid right)
-               mid-l (weighted-place left-l)
-               mid-r (weighted-place left-r)]
-           (concat (take mid-l left-l)
-                   (drop mid-l right-l)
-                   (take mid-r right-r)
-                   (drop mid-r left-r)))
+         (let [mid (weighted-place mother)
+               mother-l (take mid mother) mother-r (drop mid mother)
+               father-l (take mid father) father-r (drop mid father)
+               mid-l (when (not (empty? mother-l)) (weighted-place mother-l))
+               mid-r (when (not (empty? mother-r)) (weighted-place mother-r))]
+           (concat (if mid-l (take mid-l mother-l) '())
+                   (if mid-l (drop mid-l father-l) '())
+                   (if mid-r (take mid-r father-r) '())
+                   (if mid-r (drop mid-r mother-r) '())))
          ;; traditional 2-point crossover
-         (let [mid-l (weighted-place left)
-               mid-r (weighted-place right)
-               left-l  (take mid-l left)  left-r  (drop mid-l left)
-               right-l (take mid-r right) right-r (drop mid-r right)
-               mid-ll (weighted-place left-l)  mid-lr (weighted-place left-r)
-               mid-rl (weighted-place right-l) mid-rr (weighted-place right-r)]
-           (concat (take mid-ll left-l)
-                   (drop mid-rl right-l)
-                   (take mid-rr right-r)
-                   (drop mid-lr left-r)))))
-     :operations (list :crossover (list (:operations left) (:operations right)))
-     :compile nil :fitness nil :trials nil})
+         (let [mid-m (weighted-place mother)
+               mid-f (weighted-place father)
+               mother-l (take mid-m mother) mother-r (drop mid-m mother)
+               father-l (take mid-f father) father-r (drop mid-f father)
+               mid-ml (when (not (empty? mother-l)) (weighted-place mother-l))
+               mid-mr (when (not (empty? mother-r)) (weighted-place mother-r))
+               mid-fl (when (not (empty? father-l)) (weighted-place father-l))
+               mid-fr (when (not (empty? father-r)) (weighted-place father-r))]
+           (concat (if mid-ml (take mid-ml mother-l) '())
+                   (if mid-fl (drop mid-fl father-l) '())
+                   (if mid-fr (take mid-fr father-r) '())
+                   (if mid-mr (drop mid-mr mother-r) '())))))
+     :operations (list :crossover
+                       (list (:operations mother)
+                             (:operations father)))
+     :compile nil :fitness nil :trials (max (get :trials mother 0)
+                                            (get :trials father 0))})
 #+end_src
 
 *** compile-asm
