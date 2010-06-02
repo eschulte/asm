@@ -1,4 +1,5 @@
 #! /usr/bin/env clj
+
 (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
 
 (def ops {:swap 0 :delete 0 :append 0 :crossover 0})

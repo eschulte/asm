@@ -1,4 +1,5 @@
 #! /usr/bin/env clj
+
 (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")
 (in-ns 'asm-gp)
 (require ['clojure.contrib.command-line :as 'cmd])

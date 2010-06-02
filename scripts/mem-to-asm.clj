@@ -1,4 +1,5 @@
 #! /usr/bin/env clojure
+
 (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")(in-ns 'asm-gp)
 
 (def asm-file (read-asm (second *command-line-args*)))
