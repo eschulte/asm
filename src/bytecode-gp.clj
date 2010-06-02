@@ -50,8 +50,8 @@
 (defn instrs-place
   "Return a random location from a list of instruction lists."
   [instrs]
-  (let [meth_num (rand-int (.size instrs))]
-    (list meth_num (rand-int (.size (nth instrs meth_num))))))
+  (let [meth_num (rand-int (count instrs))]
+    (list meth_num (rand-int (count (nth instrs meth_num))))))
 
 (defn instrs-pick
   "Pick an instruction from a list of instruction lists."

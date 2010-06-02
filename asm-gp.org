@@ -121,7 +121,7 @@ timeout long-running commands
   (defn place
     "Pick a random location from a sequence"
     [lst]
-    (rand-int (.size lst)))
+    (rand-int (count lst)))
   
   (defn pick
     "Pick and return a random element from a sequence."
@@ -140,7 +140,7 @@ timeout long-running commands
               (inc index)
               (rest asm)
               (concat (repeat (m/ceil (or (weight-key (first asm)) 0)) index) assoc))))
-         0 asm (range (.size asm))))))
+         0 asm (range (count asm))))))
   
   (defn weighted-pick
     "Return a random element in an asm individual weighted by the
@@ -271,7 +271,7 @@ Apply the weights in a good or bad path to a GP individual
     (assoc asm
       :representation
       (reduce #(let [place (first %2) weight (second %2)]
-                 (if (< place (.size %1))
+                 (if (< place (count %1))
                    (concat
                     (take place %1)
                     (list (assoc (nth %1 place) key weight))
@@ -313,8 +313,8 @@ Apply the weights in a good or bad path to a GP individual
                    right (max first second)
                    left-length
                    (section-length single
-                                   (.size (take (- right left) (drop left asm))))
-                   right-length (section-length single (.size (drop right asm)))]
+                                   (count (take (- right left) (drop left asm))))
+                   right-length (section-length single (count (drop right asm)))]
                (concat
                 (take left asm)
                 (take right-length (drop right asm))
@@ -341,7 +341,7 @@ delete a section
          :representation
          (let [asm (:representation asm)
                start (weighted-place asm)
-               length (section-length single (.size (drop start asm)))]
+               length (section-length single (count (drop start asm)))]
            (concat (take start asm) (drop (+ start length) asm)))
          :operations (cons :delete (:operations asm)))))
 #+end_src
@@ -362,7 +362,7 @@ append a section or line into a random place
          :representation
          (let [asm (:representation asm)
                start (weighted-place asm :good-weight)
-               length (section-length single (.size (drop start asm)))
+               length (section-length single (count (drop start asm)))
                point (weighted-place asm)]
            (concat (take point asm) (take length (drop start asm))
                    (drop point asm)))
@@ -489,7 +489,7 @@ counter also protected behind a ref.
                               (try
                                (let [out-file (.getPath (File/createTempFile "variant" ".out"))]
                                  (with-timeout test-timeout (s/sh test bin out-file))
-                                 (.size (f/read-lines out-file)))
+                                 (count (f/read-lines out-file)))
                                (catch java.util.concurrent.TimeoutException e 0))))]
             (assoc asm
               :fitness ((dosync (alter fitness-cache assoc (.hashCode
@@ -522,7 +522,7 @@ counter also protected behind a ref.
             ;; include the originals
             (concat asm
                     ;; create random mutants
-                    (take (- population-size (.size asm))
+                    (take (- population-size (count asm))
                           (repeatedly #(mutate-asm (pick asm))))))))
 #+end_src
 
@@ -554,7 +554,7 @@ Stochastic universal Sampling (see [[wiki:Stochastic_universal_sampling]])
       (loop [pop (reverse (sort-by :fitness (shuffle population)))
              accum 0 marker 0
              result '()]
-        (if (> n (.size result))
+        (if (> n (count result))
           (if (> marker (+ accum (:fitness (first pop))))
             (recur (rest pop) (+ accum (:fitness (first pop))) marker result)
             (recur pop accum (+ marker step-size) (cons (first pop) result)))
@@ -581,7 +581,7 @@ Stochastic universal Sampling (see [[wiki:Stochastic_universal_sampling]])
     (loop [population (populate asm)
            generation 0]
       (let [best (last (sort-by :fitness population))
-            mean (/ (float (reduce + 0 (map :fitness population))) (.size population))]
+            mean (/ (float (reduce + 0 (map :fitness population))) (count population))]
         ;; write out the best so far
         (message "generation %d mean-score %S best{:fitness %S, :trials %d}"
                  generation mean (:fitness best) (:trials best))
@@ -698,8 +698,8 @@ select places and instruction from lists of instruction lists
   (defn instrs-place
     "Return a random location from a list of instruction lists."
     [instrs]
-    (let [meth_num (rand-int (.size instrs))]
-      (list meth_num (rand-int (.size (nth instrs meth_num))))))
+    (let [meth_num (rand-int (count instrs))]
+      (list meth_num (rand-int (count (nth instrs meth_num))))))
 
   (defn instrs-pick
     "Pick an instruction from a list of instruction lists."
@@ -1141,7 +1141,7 @@ looks promising
    (when-let [best (read-obj line)]
      (def total (inc total))
      (def trials (+ trials (:trials best)))
-     (def opsize (+ opsize (.size (:operations best))))
+     (def opsize (+ opsize (count (:operations best))))
      (ingest-ops (:operations best))))
 
   (println "total" total (/ total total))
@@ -1355,7 +1355,7 @@ over-defining all GP operations for InstructionLists
     ([lst]
        (let [lst (.copy lst)
              handles (seq (.getInstructionHandles lst))
-             place (rand-int (dec (.size handles)))
+             place (rand-int (dec (count handles)))
              target (pick handles)]
          (try
           (.move lst (nth handles place) target)
@@ -1634,7 +1634,7 @@ compiled binary.  The mapping is written to =mapping.clj=.
   (in-ns 'asm-gp)
   
   (def asm-file (:representation (read-asm (second *command-line-args*))))
-  (message "asm file: %s %d lines" (second *command-line-args*) (.size asm-file))
+  (message "asm file: %s %d lines" (second *command-line-args*) (count asm-file))
   (def bin-file (nth *command-line-args* 2))
   (message "bin-file: %s" bin-file)
   (def mapping {})
@@ -1660,7 +1660,7 @@ compiled binary.  The mapping is written to =mapping.clj=.
         (while (not (= (format "%s:" func) (:line (nth asm-file pointer))))
                (def pointer (inc pointer)))
         (def pointer (inc pointer))
-        (message "\t%s:%d %d lines" func (dec pointer) (.size lines))
+        (message "\t%s:%d %d lines" func (dec pointer) (count lines))
         (dorun
          (map ;; build up the mapping of memory address to LOC
           #(when-let [matches (re-matches
@@ -1856,7 +1856,7 @@ use it to adjust the score of the resulting scripts.
         user-time (+ (* 60 (Double/parseDouble (second user)))
                      (Double/parseDouble (nth user 2)))
         clean-exit (and (< user-time 0.9) (= 0 (:exit out)))
-        lines (.size (remove #(= "" %)
+        lines (count (remove #(= "" %)
                        (seq (.split (out :out) "\n"))))]
     (if (> lines 0) lines (if clean-exit 0.5 0)))
 #+end_src
@@ -2434,7 +2434,7 @@ rating.
 4) filtered the model down to only those patterns which were more than
    1 command line and appeared more than 8 times
    #+begin_src clojure
-     (def model (filter #(< 1 (.size (first %))) model))
+     (def model (filter #(< 1 (count (first %))) model))
      (def model (filter #(< 8 (second %)) model))
    #+end_src
 5) save this model to a file
@@ -2534,7 +2534,7 @@ returns a hash of assembly "commands" and their "arguments"
   possible predicates."
     [asm]
     ((fn [lines cmds]
-       (if (> (.size lines) 0)
+       (if (> (count lines) 0)
          (let [lines (remove string? lines)
                line (first lines)
                others (rest lines)

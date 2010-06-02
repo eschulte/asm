@@ -18,7 +18,7 @@
  (when-let [best (read-obj line)]
    (def total (inc total))
    (def trials (+ trials (:trials best)))
-   (def opsize (+ opsize (.size (:operations best))))
+   (def opsize (+ opsize (count (:operations best))))
    (ingest-ops (:operations best))))
 
 (println "total" total (/ total total))

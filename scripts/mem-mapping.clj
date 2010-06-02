@@ -4,7 +4,7 @@
 (in-ns 'asm-gp)
 
 (def asm-file (:representation (read-asm (second *command-line-args*))))
-(message "asm file: %s %d lines" (second *command-line-args*) (.size asm-file))
+(message "asm file: %s %d lines" (second *command-line-args*) (count asm-file))
 (def bin-file (nth *command-line-args* 2))
 (message "bin-file: %s" bin-file)
 (def mapping {})
@@ -30,7 +30,7 @@
       (while (not (= (format "%s:" func) (:line (nth asm-file pointer))))
              (def pointer (inc pointer)))
       (def pointer (inc pointer))
-      (message "\t%s:%d %d lines" func (dec pointer) (.size lines))
+      (message "\t%s:%d %d lines" func (dec pointer) (count lines))
       (dorun
        (map ;; build up the mapping of memory address to LOC
         #(when-let [matches (re-matches

@@ -38,7 +38,7 @@
 (defn place
   "Pick a random location from a sequence"
   [lst]
-  (rand-int (.size lst)))
+  (rand-int (count lst)))
 
 (defn pick
   "Pick and return a random element from a sequence."
@@ -57,7 +57,7 @@
             (inc index)
             (rest asm)
             (concat (repeat (m/ceil (or (weight-key (first asm)) 0)) index) assoc))))
-       0 asm (range (.size asm))))))
+       0 asm (range (count asm))))))
 
 (defn weighted-pick
   "Return a random element in an asm individual weighted by the
@@ -145,7 +145,7 @@
   (assoc asm
     :representation
     (reduce #(let [place (first %2) weight (second %2)]
-               (if (< place (.size %1))
+               (if (< place (count %1))
                  (concat
                   (take place %1)
                   (list (assoc (nth %1 place) key weight))
@@ -174,8 +174,8 @@
                  right (max first second)
                  left-length
                  (section-length single
-                                 (.size (take (- right left) (drop left asm))))
-                 right-length (section-length single (.size (drop right asm)))]
+                                 (count (take (- right left) (drop left asm))))
+                 right-length (section-length single (count (drop right asm)))]
              (concat
               (take left asm)
               (take right-length (drop right asm))
@@ -195,7 +195,7 @@ section."
        :representation
        (let [asm (:representation asm)
              start (weighted-place asm)
-             length (section-length single (.size (drop start asm)))]
+             length (section-length single (count (drop start asm)))]
          (concat (take start asm) (drop (+ start length) asm)))
        :operations (cons :delete (:operations asm)))))
 
@@ -209,7 +209,7 @@ section."
        :representation
        (let [asm (:representation asm)
              start (weighted-place asm :good-weight)
-             length (section-length single (.size (drop start asm)))
+             length (section-length single (count (drop start asm)))
              point (weighted-place asm)]
          (concat (take point asm) (take length (drop start asm))
                  (drop point asm)))
@@ -301,7 +301,7 @@ section."
                             (try
                              (let [out-file (.getPath (File/createTempFile "variant" ".out"))]
                                (with-timeout test-timeout (s/sh test bin out-file))
-                               (.size (f/read-lines out-file)))
+                               (count (f/read-lines out-file)))
                              (catch java.util.concurrent.TimeoutException e 0))))]
           (assoc asm
             :fitness ((dosync (alter fitness-cache assoc (.hashCode
@@ -327,7 +327,7 @@ section."
           ;; include the originals
           (concat asm
                   ;; create random mutants
-                  (take (- population-size (.size asm))
+                  (take (- population-size (count asm))
                         (repeatedly #(mutate-asm (pick asm))))))))
 
 (defn tournament
@@ -349,7 +349,7 @@ section."
     (loop [pop (reverse (sort-by :fitness (shuffle population)))
            accum 0 marker 0
            result '()]
-      (if (> n (.size result))
+      (if (> n (count result))
         (if (> marker (+ accum (:fitness (first pop))))
           (recur (rest pop) (+ accum (:fitness (first pop))) marker result)
           (recur pop accum (+ marker step-size) (cons (first pop) result)))
@@ -368,7 +368,7 @@ Return the best individual present when evolution terminates."
   (loop [population (populate asm)
          generation 0]
     (let [best (last (sort-by :fitness population))
-          mean (/ (float (reduce + 0 (map :fitness population))) (.size population))]
+          mean (/ (float (reduce + 0 (map :fitness population))) (count population))]
       ;; write out the best so far
       (message "generation %d mean-score %S best{:fitness %S, :trials %d}"
                generation mean (:fitness best) (:trials best))
