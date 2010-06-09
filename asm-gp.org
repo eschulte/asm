@@ -92,6 +92,35 @@ timeout long-running commands
        (.get f# ~ms java.util.concurrent.TimeUnit/MILLISECONDS)))
 #+end_src
 
+*** edit distance
+#+begin_src clojure
+  (declare edit-distance)
+  (defn cost "Return the difference between two assembly lines." [a b]
+    (if (= a b)
+      0
+      (if (and (string? a) (string? b))
+        (edit-distance (seq a) (seq b))
+        1)))
+#+end_src
+
+This function is adapted largely unchanged from
+http://www.fatvat.co.uk/2009/05/levenshtein-distance-in-clojure-ii.html
+#+begin_src clojure
+  (defn edit-distance-int
+    "Calculates the edit-distance between two sequences"
+    [seq1 seq2]
+    (cond
+     (empty? seq1) (count seq2)
+     (empty? seq2) (count seq1)
+     :else (min
+            (+ (cost (first seq1) (first seq2))
+               (edit-distance (rest seq1) (rest seq2))) ;; substitution
+            (inc (edit-distance (rest seq1) seq2))    ;; insertion
+            (inc (edit-distance seq1 (rest seq2)))))) ;; deletion
+  
+  (def edit-distance (memoize edit-distance-int))
+#+end_src
+
 *** serialization
     :PROPERTIES:
     :ID:       6ea5f5f7-1e96-4011-bc5a-92a3bcb72e63
@@ -139,7 +168,8 @@ timeout long-running commands
              (recur
               (inc index)
               (rest asm)
-              (concat (repeat (m/ceil (or (weight-key (first asm)) 0)) index) assoc))))
+              (concat (repeat (m/ceil (or (weight-key (first asm)) 0)) index)
+                      assoc))))
          0 asm (range (count asm))))))
   
   (defn weighted-pick
@@ -153,12 +183,43 @@ timeout long-running commands
   (defn homologous-pick
     "Return point in FROM whose surroundings are most like EXEMPLAR."
     [from exemplar]
-    )
+    (let [neigh (/ (- (count exemplar) 1) 2)
+          minima
+          (loop [index neigh
+                 closest nil
+                 accum '()
+                 remaining (drop neigh from)]
+            (if (empty? (rest remaining))
+              accum
+              ;; sliding window from the front of the program, forward.
+              (let [window (points-around from index neigh)
+                    diff (edit-distance window exemplar)]
+                (if (= diff 0)
+                  ;; if hit zero, then abort and use that place
+                  (list (list index 0))
+                  ;; for each place, find the edit distance against the
+                  ;; exemplar
+                  (recur
+                   (inc index)
+                   (min diff (or closest diff))
+                   (if (< diff (or closest diff))
+                     (list (list index diff))
+                     (cons diff accum))
+                   (rest remaining))))))]
+      ;; randomly choose one of the minima
+      (first (pick minima))))
+  
+  (def point-neighborhood 8)
   
   (defn points-around
     "Return points in FROM located around POINT, ensure an even balance."
-    [from point]
-    )
+    ([from point] (points-around from point point-neighborhood))
+    ([from point neighborhood]
+       (let [neigh (apply min
+                          (map m/abs
+                               (list neighborhood point
+                                     (- (count from) point))))]
+         (take (+ 1 (* 2 neigh)) (drop (- point neigh) from)))))
 #+end_src
 
 *** reading and writing assembly
