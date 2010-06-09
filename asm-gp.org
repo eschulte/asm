@@ -149,6 +149,16 @@ timeout long-running commands
        (nth asm (weighted-place asm)))
     ([asm weight-key]
        (nth asm (weighted-place asm weight-key))))
+  
+  (defn homologous-pick
+    "Return point in FROM whose surroundings are most like EXEMPLAR."
+    [from exemplar]
+    )
+  
+  (defn points-around
+    "Return points in FROM located around POINT, ensure an even balance."
+    [from point]
+    )
 #+end_src
 
 *** reading and writing assembly
@@ -393,35 +403,80 @@ which here means either delete, append, or swap
 Two point crossover between two individuals.  Will be /sticky/ with
 probability =sticky-crossover-rate=.
 #+begin_src clojure
-  (defn crossover-asm
+  (defn crossover-sticky-asm
     "Takes two individuals and returns the result of performing single
     point crossover between then."  [mother father]
     {:representation
      (let [mother (:representation mother) father (:representation father)]
-       (if (< (rand) sticky-crossover-rate)
-         ;; homologous crossover -- does taking a mid-point first bias things?
-         (let [mid (weighted-place mother)
-               mother-l (take mid mother) mother-r (drop mid mother)
-               father-l (take mid father) father-r (drop mid father)
-               mid-l (when (not (empty? mother-l)) (weighted-place mother-l))
-               mid-r (when (not (empty? mother-r)) (weighted-place mother-r))]
-           (concat (if mid-l (take mid-l mother-l) '())
-                   (if mid-l (drop mid-l father-l) '())
-                   (if mid-r (take mid-r father-r) '())
-                   (if mid-r (drop mid-r mother-r) '())))
-         ;; traditional 2-point crossover
-         (let [mid-m (weighted-place mother)
-               mid-f (weighted-place father)
-               mother-l (take mid-m mother) mother-r (drop mid-m mother)
-               father-l (take mid-f father) father-r (drop mid-f father)
-               mid-ml (when (not (empty? mother-l)) (weighted-place mother-l))
-               mid-mr (when (not (empty? mother-r)) (weighted-place mother-r))
-               mid-fl (when (not (empty? father-l)) (weighted-place father-l))
-               mid-fr (when (not (empty? father-r)) (weighted-place father-r))]
-           (concat (if mid-ml (take mid-ml mother-l) '())
-                   (if mid-fl (drop mid-fl father-l) '())
-                   (if mid-fr (take mid-fr father-r) '())
-                   (if mid-mr (drop mid-mr mother-r) '())))))
+       ;; sticky crossover -- does taking a mid-point first bias things?
+       (let [mid (weighted-place mother)
+             mother-l (take mid mother) mother-r (drop mid mother)
+             father-l (take mid father) father-r (drop mid father)
+             mid-l (when (not (empty? mother-l)) (weighted-place mother-l))
+             mid-r (when (not (empty? mother-r)) (weighted-place mother-r))]
+         (concat (if mid-l (take mid-l mother-l) '())
+                 (if mid-l (drop mid-l father-l) '())
+                 (if mid-r (take mid-r father-r) '())
+                 (if mid-r (drop mid-r mother-r) '()))))
+     :operations (list :crossover
+                       (list (:operations mother)
+                             (:operations father)))
+     :compile nil :fitness nil :trials (max (get :trials mother 0)
+                                            (get :trials father 0))})
+#+end_src
+
+#+begin_src clojure
+  (defn crossover-normal-asm
+    "Takes two individuals and returns the result of performing single
+    point crossover between then."  [mother father]
+    {:representation
+     (let [mother (:representation mother) father (:representation father)]
+       ;; traditional 2-point crossover
+       (let [mid-m (weighted-place mother)
+             mid-f (weighted-place father)
+             mother-l (take mid-m mother) mother-r (drop mid-m mother)
+             father-l (take mid-f father) father-r (drop mid-f father)
+             mid-ml (when (not (empty? mother-l)) (weighted-place mother-l))
+             mid-mr (when (not (empty? mother-r)) (weighted-place mother-r))
+             mid-fl (when (not (empty? father-l)) (weighted-place father-l))
+             mid-fr (when (not (empty? father-r)) (weighted-place father-r))]
+         (concat (if mid-ml (take mid-ml mother-l) '())
+                 (if mid-fl (drop mid-fl father-l) '())
+                 (if mid-fr (take mid-fr father-r) '())
+                 (if mid-mr (drop mid-mr mother-r) '()))))
+     :operations (list :crossover
+                       (list (:operations mother)
+                             (:operations father)))
+     :compile nil :fitness nil :trials (max (get :trials mother 0)
+                                            (get :trials father 0))})
+#+end_src
+
+#+begin_src clojure
+  (defn crossover-homologous-asm
+    "Takes two individuals and returns the result of performing single
+    point crossover between then."  [mother father]
+    {:representation
+     (let [mother (:representation mother) father (:representation father)]
+       ;; homologous -- similar instructions
+       ;; 
+       ;; 1) pick two spots in mother
+       ;; 2) find similar spots in father
+       ;; 3) proceed with normal combination method
+       ;; 
+       (let [mid-m (weighted-place mother)
+             ;; 1
+             mother-l (take mid-m mother) mother-r (drop mid-m mother)
+             mid-ml (when (not (empty? mother-l)) (weighted-place mother-l))
+             mid-mr (when (not (empty? mother-r)) (weighted-place mother-r))
+             ;; 2
+             mid-fl (homologous-pick father (points-around mother-l mother-ml))
+             father-l (drop mid-fl father)
+             mid-fr (homologous-pick father-l (points-around mother-r mother-mr))]
+         ;; 3
+         (concat (if mid-ml (take mid-ml mother-l) '())
+                 (if mid-fl (drop mid-fl father-l) '())
+                 (if mid-fr (take mid-fr father-r) '())
+                 (if mid-mr (drop mid-mr mother-r) '()))))
      :operations (list :crossover
                        (list (:operations mother)
                              (:operations father)))
