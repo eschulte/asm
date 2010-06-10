@@ -350,9 +350,9 @@ section."
      (let [mid-m (weighted-place mother)
            ;; 1
            mother-l (take mid-m mother) mother-r (drop mid-m mother)
-           mid-ml (when (not (empty? mother-l)) (weighted-place mother-l))
-           exemplar-l (points-around mother-l mid-ml)
-           mid-mr (when (not (empty? mother-r)) (weighted-place mother-r))
+           mid-ml (if (empty? mother-l) 0 (weighted-place mother-l))
+           exemplar-l (when mid-ml (points-around mother-l mid-ml))
+           mid-mr (if (empty? mother-r) 0 (weighted-place mother-r))
            exemplar-r (points-around mother-l mid-mr)
            ;; 2
            mid-fl (homologous-place father exemplar-l)
@@ -480,12 +480,13 @@ Return the best individual present when evolution terminates."
   (loop [population (populate asm)
          generation 0]
     (let [best (last (sort-by :fitness population))
-          mean (/ (float (reduce + 0 (map :fitness population))) (count population))]
+          mean (/ (float (reduce + 0 (map :fitness population)))
+                  (count population))]
       ;; write out the best so far
       (message "generation %d mean-score %S best{:fitness %S, :trials %d}"
                generation mean (:fitness best) (:trials best))
-      (write-obj (format "variant.gen.%d.best.%S.clj" generation (:fitness best))
-                 best)
+      (write-obj (format "variant.gen.%d.best.%S.clj"
+                         generation (:fitness best)) best)
       (if (>= (:fitness best) target-fitness)
         (do ;; write out the winner to a file and return
           (message "success after %d generations and %d fitness evaluations"
@@ -503,10 +504,13 @@ Return the best individual present when evolution terminates."
                     (concat
                      (take (Math/round (* crossover-rate population-size))
                            (repeatedly
-                            (fn [] (apply crossover-asm (select-asm population 2)))))
+                            (fn []
+                              (apply crossover-normal-asm
+                                     (select-asm population 2)))))
                      (pmap #(mutate-asm %)
                           (select-asm population
-                                      (Math/round (* (- 1 crossover-rate) population-size)))))))
+                                      (Math/round (* (- 1 crossover-rate)
+                                                     population-size)))))))
              population)
             population-size)
            (+ generation 1)))))))
