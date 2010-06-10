@@ -92,6 +92,12 @@ timeout long-running commands
        (.get f# ~ms java.util.concurrent.TimeUnit/MILLISECONDS)))
 #+end_src
 
+*** simple
+tiny little functions
+#+begin_src clojure
+  (defn abs [n] (if (neg? n) (- 0 n) n))
+#+end_src
+
 *** edit distance
 #+begin_src clojure
   (declare edit-distance)
@@ -156,6 +162,18 @@ http://www.fatvat.co.uk/2009/05/levenshtein-distance-in-clojure-ii.html
     "Pick and return a random element from a sequence."
     [lst] (nth lst (place lst)))
   
+  (def point-neighborhood 4)
+  
+  (defn points-around
+    "Return points in FROM located around POINT, ensure an even balance."
+    ([from point] (points-around from point point-neighborhood))
+    ([from point neighborhood]
+       (let [neigh (apply min
+                          (map abs
+                               (list neighborhood point
+                                     (- (count from) point))))]
+         (take (+ 1 (* 2 neigh)) (drop (- point neigh) from)))))
+  
   (defn weighted-place
     "Pick a random location in an asm individual weighted by the
      associated bad-path."
@@ -180,7 +198,7 @@ http://www.fatvat.co.uk/2009/05/levenshtein-distance-in-clojure-ii.html
     ([asm weight-key]
        (nth asm (weighted-place asm weight-key))))
   
-  (defn homologous-pick
+  (defn homologous-place
     "Return point in FROM whose surroundings are most like EXEMPLAR."
     [from exemplar]
     (let [neigh (/ (- (count exemplar) 1) 2)
@@ -204,22 +222,10 @@ http://www.fatvat.co.uk/2009/05/levenshtein-distance-in-clojure-ii.html
                    (min diff (or closest diff))
                    (if (< diff (or closest diff))
                      (list (list index diff))
-                     (cons diff accum))
+                     (cons (list index diff) accum))
                    (rest remaining))))))]
       ;; randomly choose one of the minima
       (first (pick minima))))
-  
-  (def point-neighborhood 8)
-  
-  (defn points-around
-    "Return points in FROM located around POINT, ensure an even balance."
-    ([from point] (points-around from point point-neighborhood))
-    ([from point neighborhood]
-       (let [neigh (apply min
-                          (map m/abs
-                               (list neighborhood point
-                                     (- (count from) point))))]
-         (take (+ 1 (* 2 neigh)) (drop (- point neigh) from)))))
 #+end_src
 
 *** reading and writing assembly
@@ -528,11 +534,16 @@ probability =sticky-crossover-rate=.
              ;; 1
              mother-l (take mid-m mother) mother-r (drop mid-m mother)
              mid-ml (when (not (empty? mother-l)) (weighted-place mother-l))
+             exemplar-l (points-around mother-l mid-ml)
              mid-mr (when (not (empty? mother-r)) (weighted-place mother-r))
+             exemplar-r (points-around mother-l mid-mr)
              ;; 2
-             mid-fl (homologous-pick father (points-around mother-l mother-ml))
-             father-l (drop mid-fl father)
-             mid-fr (homologous-pick father-l (points-around mother-r mother-mr))]
+             mid-fl (homologous-place father exemplar-l)
+             father-l (take mid-fl father)
+             father-remainder (drop (- mid-fl (/ (- (count exemplar-r) 1) 2))
+                                    father)
+             mid-fr (homologous-place father-remainder exemplar-r)
+             father-r (drop mid-fr father)]
          ;; 3
          (concat (if mid-ml (take mid-ml mother-l) '())
                  (if mid-fl (drop mid-fl father-l) '())

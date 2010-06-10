@@ -23,6 +23,30 @@
   `(let [f# (future ~@body)]
      (.get f# ~ms java.util.concurrent.TimeUnit/MILLISECONDS)))
 
+(defn abs [n] (if (neg? n) (- 0 n) n))
+
+(declare edit-distance)
+(defn cost "Return the difference between two assembly lines." [a b]
+  (if (= a b)
+    0
+    (if (and (string? a) (string? b))
+      (edit-distance (seq a) (seq b))
+      1)))
+
+(defn edit-distance-int
+  "Calculates the edit-distance between two sequences"
+  [seq1 seq2]
+  (cond
+   (empty? seq1) (count seq2)
+   (empty? seq2) (count seq1)
+   :else (min
+          (+ (cost (first seq1) (first seq2))
+             (edit-distance (rest seq1) (rest seq2))) ;; substitution
+          (inc (edit-distance (rest seq1) seq2))    ;; insertion
+          (inc (edit-distance seq1 (rest seq2)))))) ;; deletion
+
+(def edit-distance (memoize edit-distance-int))
+
 (defn write-obj
   "Write a clojure object to a file" [f obj]
   (f/spit f (pr-str obj)))
@@ -44,6 +68,18 @@
   "Pick and return a random element from a sequence."
   [lst] (nth lst (place lst)))
 
+(def point-neighborhood 4)
+
+(defn points-around
+  "Return points in FROM located around POINT, ensure an even balance."
+  ([from point] (points-around from point point-neighborhood))
+  ([from point neighborhood]
+     (let [neigh (apply min
+                        (map abs
+                             (list neighborhood point
+                                   (- (count from) point))))]
+       (take (+ 1 (* 2 neigh)) (drop (- point neigh) from)))))
+
 (defn weighted-place
   "Pick a random location in an asm individual weighted by the
    associated bad-path."
@@ -56,7 +92,8 @@
            (recur
             (inc index)
             (rest asm)
-            (concat (repeat (m/ceil (or (weight-key (first asm)) 0)) index) assoc))))
+            (concat (repeat (m/ceil (or (weight-key (first asm)) 0)) index)
+                    assoc))))
        0 asm (range (count asm))))))
 
 (defn weighted-pick
@@ -66,6 +103,35 @@
      (nth asm (weighted-place asm)))
   ([asm weight-key]
      (nth asm (weighted-place asm weight-key))))
+
+(defn homologous-place
+  "Return point in FROM whose surroundings are most like EXEMPLAR."
+  [from exemplar]
+  (let [neigh (/ (- (count exemplar) 1) 2)
+        minima
+        (loop [index neigh
+               closest nil
+               accum '()
+               remaining (drop neigh from)]
+          (if (empty? (rest remaining))
+            accum
+            ;; sliding window from the front of the program, forward.
+            (let [window (points-around from index neigh)
+                  diff (edit-distance window exemplar)]
+              (if (= diff 0)
+                ;; if hit zero, then abort and use that place
+                (list (list index 0))
+                ;; for each place, find the edit distance against the
+                ;; exemplar
+                (recur
+                 (inc index)
+                 (min diff (or closest diff))
+                 (if (< diff (or closest diff))
+                   (list (list index diff))
+                   (cons (list index diff) accum))
+                 (rest remaining))))))]
+    ;; randomly choose one of the minima
+    (first (pick minima))))
 
 (defn read-asm
   "Read in an assembly file as list and parse cmd lines."
@@ -225,35 +291,81 @@ section."
      (= choice 1) (append-asm asm)
      (= choice 2) (swap-asm asm))))
 
-(defn crossover-asm
+(defn crossover-sticky-asm
   "Takes two individuals and returns the result of performing single
   point crossover between then."  [mother father]
   {:representation
    (let [mother (:representation mother) father (:representation father)]
-     (if (< (rand) sticky-crossover-rate)
-       ;; homologous crossover -- does taking a mid-point first bias things?
-       (let [mid (weighted-place mother)
-             mother-l (take mid mother) mother-r (drop mid mother)
-             father-l (take mid father) father-r (drop mid father)
-             mid-l (when (not (empty? mother-l)) (weighted-place mother-l))
-             mid-r (when (not (empty? mother-r)) (weighted-place mother-r))]
-         (concat (if mid-l (take mid-l mother-l) '())
-                 (if mid-l (drop mid-l father-l) '())
-                 (if mid-r (take mid-r father-r) '())
-                 (if mid-r (drop mid-r mother-r) '())))
-       ;; traditional 2-point crossover
-       (let [mid-m (weighted-place mother)
-             mid-f (weighted-place father)
-             mother-l (take mid-m mother) mother-r (drop mid-m mother)
-             father-l (take mid-f father) father-r (drop mid-f father)
-             mid-ml (when (not (empty? mother-l)) (weighted-place mother-l))
-             mid-mr (when (not (empty? mother-r)) (weighted-place mother-r))
-             mid-fl (when (not (empty? father-l)) (weighted-place father-l))
-             mid-fr (when (not (empty? father-r)) (weighted-place father-r))]
-         (concat (if mid-ml (take mid-ml mother-l) '())
-                 (if mid-fl (drop mid-fl father-l) '())
-                 (if mid-fr (take mid-fr father-r) '())
-                 (if mid-mr (drop mid-mr mother-r) '())))))
+     ;; sticky crossover -- does taking a mid-point first bias things?
+     (let [mid (weighted-place mother)
+           mother-l (take mid mother) mother-r (drop mid mother)
+           father-l (take mid father) father-r (drop mid father)
+           mid-l (when (not (empty? mother-l)) (weighted-place mother-l))
+           mid-r (when (not (empty? mother-r)) (weighted-place mother-r))]
+       (concat (if mid-l (take mid-l mother-l) '())
+               (if mid-l (drop mid-l father-l) '())
+               (if mid-r (take mid-r father-r) '())
+               (if mid-r (drop mid-r mother-r) '()))))
+   :operations (list :crossover
+                     (list (:operations mother)
+                           (:operations father)))
+   :compile nil :fitness nil :trials (max (get :trials mother 0)
+                                          (get :trials father 0))})
+
+(defn crossover-normal-asm
+  "Takes two individuals and returns the result of performing single
+  point crossover between then."  [mother father]
+  {:representation
+   (let [mother (:representation mother) father (:representation father)]
+     ;; traditional 2-point crossover
+     (let [mid-m (weighted-place mother)
+           mid-f (weighted-place father)
+           mother-l (take mid-m mother) mother-r (drop mid-m mother)
+           father-l (take mid-f father) father-r (drop mid-f father)
+           mid-ml (when (not (empty? mother-l)) (weighted-place mother-l))
+           mid-mr (when (not (empty? mother-r)) (weighted-place mother-r))
+           mid-fl (when (not (empty? father-l)) (weighted-place father-l))
+           mid-fr (when (not (empty? father-r)) (weighted-place father-r))]
+       (concat (if mid-ml (take mid-ml mother-l) '())
+               (if mid-fl (drop mid-fl father-l) '())
+               (if mid-fr (take mid-fr father-r) '())
+               (if mid-mr (drop mid-mr mother-r) '()))))
+   :operations (list :crossover
+                     (list (:operations mother)
+                           (:operations father)))
+   :compile nil :fitness nil :trials (max (get :trials mother 0)
+                                          (get :trials father 0))})
+
+(defn crossover-homologous-asm
+  "Takes two individuals and returns the result of performing single
+  point crossover between then."  [mother father]
+  {:representation
+   (let [mother (:representation mother) father (:representation father)]
+     ;; homologous -- similar instructions
+     ;; 
+     ;; 1) pick two spots in mother
+     ;; 2) find similar spots in father
+     ;; 3) proceed with normal combination method
+     ;; 
+     (let [mid-m (weighted-place mother)
+           ;; 1
+           mother-l (take mid-m mother) mother-r (drop mid-m mother)
+           mid-ml (when (not (empty? mother-l)) (weighted-place mother-l))
+           exemplar-l (points-around mother-l mid-ml)
+           mid-mr (when (not (empty? mother-r)) (weighted-place mother-r))
+           exemplar-r (points-around mother-l mid-mr)
+           ;; 2
+           mid-fl (homologous-place father exemplar-l)
+           father-l (take mid-fl father)
+           father-remainder (drop (- mid-fl (/ (- (count exemplar-r) 1) 2))
+                                  father)
+           mid-fr (homologous-place father-remainder exemplar-r)
+           father-r (drop mid-fr father)]
+       ;; 3
+       (concat (if mid-ml (take mid-ml mother-l) '())
+               (if mid-fl (drop mid-fl father-l) '())
+               (if mid-fr (take mid-fr father-r) '())
+               (if mid-mr (drop mid-mr mother-r) '()))))
    :operations (list :crossover
                      (list (:operations mother)
                            (:operations father)))
