@@ -131,7 +131,7 @@
                    (cons (list index diff) accum))
                  (rest remaining))))))]
     ;; randomly choose one of the minima
-    (first (pick minima))))
+    (if (empty? minima) (place from) (first (pick minima)))))
 
 (defn read-asm
   "Read in an assembly file as list and parse cmd lines."
@@ -231,24 +231,26 @@
   ([asm single]
      (assoc asm
        :representation
-       (let [asm (:representation asm)
-             first (weighted-place asm)
-             second (weighted-place asm)]
-         (if (= first second)
-           asm
-           (let [left (min first second)
-                 right (max first second)
-                 left-length
-                 (section-length single
-                                 (count (take (- right left) (drop left asm))))
-                 right-length (section-length single (count (drop right asm)))]
-             (concat
-              (take left asm)
-              (take right-length (drop right asm))
-              (take (- right (+ left left-length))
-                    (drop (+ left left-length) asm))
-              (take left-length (drop left asm))
-              (drop (+ right right-length) asm)))))
+       (if (empty? asm)
+         asm
+         (let [asm (:representation asm)
+               first (weighted-place asm)
+               second (weighted-place asm)]
+           (if (= first second)
+             asm
+             (let [left (min first second)
+                   right (max first second)
+                   left-length
+                   (section-length single
+                                   (count (take (- right left) (drop left asm))))
+                   right-length (section-length single (count (drop right asm)))]
+               (concat
+                (take left asm)
+                (take right-length (drop right asm))
+                (take (- right (+ left left-length))
+                      (drop (+ left left-length) asm))
+                (take left-length (drop left asm))
+                (drop (+ right right-length) asm))))))
        :operations (cons :swap (:operations asm)))))
 
 (defn delete-asm
@@ -259,10 +261,12 @@ section."
   ([asm single]
      (assoc asm
        :representation
-       (let [asm (:representation asm)
-             start (weighted-place asm)
-             length (section-length single (count (drop start asm)))]
-         (concat (take start asm) (drop (+ start length) asm)))
+       (if (empty? asm)
+         asm
+         (let [asm (:representation asm)
+               start (weighted-place asm)
+               length (section-length single (count (drop start asm)))]
+           (concat (take start asm) (drop (+ start length) asm))))
        :operations (cons :delete (:operations asm)))))
 
 (defn append-asm
@@ -273,12 +277,14 @@ section."
   ([asm single]
      (assoc asm
        :representation
-       (let [asm (:representation asm)
-             start (weighted-place asm :good-weight)
-             length (section-length single (count (drop start asm)))
-             point (weighted-place asm)]
-         (concat (take point asm) (take length (drop start asm))
-                 (drop point asm)))
+       (if (empty? asm)
+         asm
+         (let [asm (:representation asm)
+               start (weighted-place asm :good-weight)
+               length (section-length single (count (drop start asm)))
+               point (weighted-place asm)]
+           (concat (take point asm) (take length (drop start asm))
+                   (drop point asm))))
        :operations (cons :append (:operations asm)))))
 
 (defn mutate-asm
@@ -295,17 +301,23 @@ section."
   "Takes two individuals and returns the result of performing single
   point crossover between then."  [mother father]
   {:representation
-   (let [mother (:representation mother) father (:representation father)]
-     ;; sticky crossover -- does taking a mid-point first bias things?
-     (let [mid (weighted-place mother)
-           mother-l (take mid mother) mother-r (drop mid mother)
-           father-l (take mid father) father-r (drop mid father)
-           mid-l (when (not (empty? mother-l)) (weighted-place mother-l))
-           mid-r (when (not (empty? mother-r)) (weighted-place mother-r))]
-       (concat (if mid-l (take mid-l mother-l) '())
-               (if mid-l (drop mid-l father-l) '())
-               (if mid-r (take mid-r father-r) '())
-               (if mid-r (drop mid-r mother-r) '()))))
+   (if (empty? mother)
+     (if (empty? father)
+       '()
+       father)
+     (if (empty? father)
+       mother
+       (let [mother (:representation mother) father (:representation father)]
+         ;; sticky crossover -- does taking a mid-point first bias things?
+         (let [mid (weighted-place mother)
+               mother-l (take mid mother) mother-r (drop mid mother)
+               father-l (take mid father) father-r (drop mid father)
+               mid-l (when (not (empty? mother-l)) (weighted-place mother-l))
+               mid-r (when (not (empty? mother-r)) (weighted-place mother-r))]
+           (concat (if mid-l (take mid-l mother-l) '())
+                   (if mid-l (drop mid-l father-l) '())
+                   (if mid-r (take mid-r father-r) '())
+                   (if mid-r (drop mid-r mother-r) '()))))))
    :operations (list :crossover
                      (list (:operations mother)
                            (:operations father)))
@@ -316,20 +328,26 @@ section."
   "Takes two individuals and returns the result of performing single
   point crossover between then."  [mother father]
   {:representation
-   (let [mother (:representation mother) father (:representation father)]
-     ;; traditional 2-point crossover
-     (let [mid-m (weighted-place mother)
-           mid-f (weighted-place father)
-           mother-l (take mid-m mother) mother-r (drop mid-m mother)
-           father-l (take mid-f father) father-r (drop mid-f father)
-           mid-ml (when (not (empty? mother-l)) (weighted-place mother-l))
-           mid-mr (when (not (empty? mother-r)) (weighted-place mother-r))
-           mid-fl (when (not (empty? father-l)) (weighted-place father-l))
-           mid-fr (when (not (empty? father-r)) (weighted-place father-r))]
-       (concat (if mid-ml (take mid-ml mother-l) '())
-               (if mid-fl (drop mid-fl father-l) '())
-               (if mid-fr (take mid-fr father-r) '())
-               (if mid-mr (drop mid-mr mother-r) '()))))
+   (if (empty? mother)
+     (if (empty? father)
+       '()
+       father)
+     (if (empty? father)
+       mother
+       (let [mother (:representation mother) father (:representation father)]
+         ;; traditional 2-point crossover
+         (let [mid-m (weighted-place mother)
+               mid-f (weighted-place father)
+               mother-l (take mid-m mother) mother-r (drop mid-m mother)
+               father-l (take mid-f father) father-r (drop mid-f father)
+               mid-ml (when (not (empty? mother-l)) (weighted-place mother-l))
+               mid-mr (when (not (empty? mother-r)) (weighted-place mother-r))
+               mid-fl (when (not (empty? father-l)) (weighted-place father-l))
+               mid-fr (when (not (empty? father-r)) (weighted-place father-r))]
+           (concat (if mid-ml (take mid-ml mother-l) '())
+                   (if mid-fl (drop mid-fl father-l) '())
+                   (if mid-fr (take mid-fr father-r) '())
+                   (if mid-mr (drop mid-mr mother-r) '()))))))
    :operations (list :crossover
                      (list (:operations mother)
                            (:operations father)))
@@ -340,32 +358,39 @@ section."
   "Takes two individuals and returns the result of performing single
   point crossover between then."  [mother father]
   {:representation
-   (let [mother (:representation mother) father (:representation father)]
-     ;; homologous -- similar instructions
-     ;; 
-     ;; 1) pick two spots in mother
-     ;; 2) find similar spots in father
-     ;; 3) proceed with normal combination method
-     ;; 
-     (let [mid-m (weighted-place mother)
-           ;; 1
-           mother-l (take mid-m mother) mother-r (drop mid-m mother)
-           mid-ml (if (empty? mother-l) 0 (weighted-place mother-l))
-           exemplar-l (when mid-ml (points-around mother-l mid-ml))
-           mid-mr (if (empty? mother-r) 0 (weighted-place mother-r))
-           exemplar-r (points-around mother-l mid-mr)
-           ;; 2
-           mid-fl (homologous-place father exemplar-l)
-           father-l (take mid-fl father)
-           father-remainder (drop (- mid-fl (/ (- (count exemplar-r) 1) 2))
-                                  father)
-           mid-fr (homologous-place father-remainder exemplar-r)
-           father-r (drop mid-fr father)]
-       ;; 3
-       (concat (if mid-ml (take mid-ml mother-l) '())
-               (if mid-fl (drop mid-fl father-l) '())
-               (if mid-fr (take mid-fr father-r) '())
-               (if mid-mr (drop mid-mr mother-r) '()))))
+   (if (empty? mother)
+     (if (empty? father)
+       '()
+       father)
+     (if (empty? father)
+       mother
+       (let [mother (:representation mother) father (:representation father)]
+         ;; homologous -- similar instructions
+         ;; 
+         ;; 1) pick two spots in mother
+         ;; 2) find similar spots in father
+         ;; 3) proceed with normal combination method
+         ;; 
+         (let [mid-m (weighted-place mother)
+               ;; 1
+               mother-l (take mid-m mother) mother-r (drop mid-m mother)
+               mid-ml (if (empty? mother-l) 0 (weighted-place mother-l))
+               exemplar-l (when mid-ml (points-around mother-l mid-ml))
+               mid-mr (if (empty? mother-r) 0 (weighted-place mother-r))
+               exemplar-r (points-around mother-l mid-mr)
+               ;; 2
+               mid-fl (homologous-place father exemplar-l)
+               father-l (take mid-fl father)
+               father-remainder (drop (- mid-fl (/ (- (count exemplar-r) 1) 2))
+                                      father)
+               mid-fr (if (not (empty? father-remainder))
+                        (homologous-place father-remainder exemplar-r))
+               father-r (drop mid-fr father-remainder)]
+           ;; 3
+           (concat (if mid-ml (take mid-ml mother-l) '())
+                   (if mid-fl (drop mid-fl father-l) '())
+                   (if mid-fr (take mid-fr father-r) '())
+                   (if mid-mr (drop mid-mr mother-r) '()))))))
    :operations (list :crossover
                      (list (:operations mother)
                            (:operations father)))
