@@ -12,7 +12,7 @@ for ((run=0;run<100;run++)) ; do
           rm -rf /tmp/variant$i$j*
       done
   done
-  nice modify.clj --pop 400 --tour --tour-size 3 --cross-rate 0.1 $1 >& $run.debug
+  nice modify.clj --tour --tour-size 2 --pop 400 --cross-rate 0.1 $1 >& $run.debug
   mkdir variants/$run
   mv variant.* variants/$run/
   if [ -f $run.debug ] ; then mv $run.debug variants/$run/debug ; fi
