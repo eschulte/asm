@@ -1067,6 +1067,7 @@ instillation, performing fault localization to isolate buggy portions
 of the ASM file, running evolution of new program variants until a
 solution is found.
 
+** setup
 1) The source-code and all support files are available at
    [[file:asm-gp.tar.bz2][asm-gp.tar.bz2]].
 
@@ -1084,124 +1085,15 @@ solution is found.
    the good and bad test cases respectively (=test-good.sh=,
    =test-bad.sh=), and a number of files containing the correct output
    for various inputs (=output.*=).
-   
-   Compile the buggy program to assembly code using the [[http://gcc.gnu.org/][Gnu C Compiler]].
-   : gcc -S gcd.c
-   
-   Compile an executable from the resulting assembly
-   : gcc -o gcd gcd.s
 
 4) Now install [[http://oprofile.sourceforge.net/news/][oprofile]], which will be used for fault localization.
    On Debian systems =oprofile= can be installed with
    : apt-get install oprofile
 
-   First =oprofile= must be started with something like the following.
-   : opcontrol --start
-   
-   Once started =oprofile= will begin taking samples of the program
-   counter(s) in your machine.
-   
-   We will run both the /good/ and /bad/ test cases with
-   =test-good.sh= and =test-bad.sh= respectively with =oprofile=
-   running in the background.  After each of these runs we view the
-   samples with
-   : opannotate --assembly gcd
+5) Both [[http://gcc.gnu.org/][gcc]] and [[http://www.gnu.org/software/gdb/][gdb]] are, the GNU C compiler and debugger, are assumed
+   to be available on your system.
 
-   the output of that command looks something like
-   #+begin_example
-        1  0.3257 : 804f318:       cmpl   $0x1,-0x10(%ebp)
-        3  0.9772 : 804f31c:       je     804f323 <sgets+0x115>
-                  : 804f31e:       negl   -0xc(%ebp)
-                  : 804f321:       jmp    804f347 <sgets+0x139>
-                  : 804f323:       addl   $0x1,-0xc(%ebp)
-        1  0.3257 : 804f327:       mov    0x8(%ebp),%eax
-                  : 804f32a:       movzbl (%eax),%eax
-                  : 804f32d:       cmp    $0xa,%al
-        1  0.3257 : 804f32f:       jne    804f337 <sgets+0x129>
-                  : 804f331:       addl   $0x1,0x8(%ebp)
-   #+end_example
-   and will be usable for localizing good/bad behavior to the specific
-   assembly instructions in the assembly file (=gcd.s=).  The mapping
-   from memory addresses to assembly instructions is generated using
-   the =mem-mapping.clj= script included in the scripts directory
-   distributed with this project.  This mapping is generated with the
-   following command
-   : clj ../mem-mapping.clj gcd.s gcd
-   
-   Putting this all together yields the following sequence of steps
-   which should be performed for both the good and bad tests (good
-   shown).
-   1) stop the daemon
-      : sudo opcontrol --shutdown
-   2) clear out old information
-      : sudo opcontrol --reset
-   3) start up the daemon
-      : sudo opcontrol --start
-   4) run the good test 50 times
-      #+begin_src sh
-        for i in `seq 10`; do
-            j=`expr $i - 1`
-            ./test-good.sh ./null output 401$j
-        done
-      #+end_src
-   5) convert the memory addresses to lines in the assembly file and
-      save the results in the file =good.path=
-      : opannotate --assembly null | clj ../opannotate-to-path.clj > good.path
-
-5) Once the good and bad path files have been created the actual
-   evolution of program variants can begin.  Once again it is worth
-   mentioning that this step should be performed inside of a virtual
-   machine as arbitrary assembly code will be executed, and will in
-   all likelihood take actions which would be considered malicious one
-   inclined to assign motives to artifacts of random mutation.
-   
-   The =modify.clj= script controls the entire evolution process.
-   It's build-in help command should be sufficient to describe it's
-   usage.  As with the rest of this project, everything should be
-   considered to be in early alpha development, and the source-code is
-   the ultimate form of documentation.
-   #+begin_example
-     $ modify.clj --help
-     Prototype No-Specification Machine-code-level Bug-Fixer
-             modify [opts] baseline.s
-     Options
-       --gcc <arg>          use X to compile C files                              [default gcc]           
-       --ldflags <arg>      use X as LDFLAGS when compiling                                               
-       --good <arg>         use X as good-test command                            [default ./test-good.sh]
-       --bad <arg>          use X as bad-test command                             [default ./test-bad.sh] 
-       --bad-factor <arg>   multiply 'bad' testcases by X for utility             [default 5]             
-       --good-factor <arg>  multiply 'good' testcases by X for utility            [default 1]             
-       --sanity-test <arg>  sanity fitness of baseline individual                                         
-       --max <arg>          best fitness possible is X                            [default 10]            
-       --fit-cache <arg>    path to the fitness cache                                                     
-       --good-path <arg>    file specifying the good path                         [default good.path]     
-       --bad-path <arg>     file specifying the good path                         [default bad.path]      
-       --pop <arg>          use population size of X                              [default 40]            
-       --gen <arg>          use X genetic algorithm generations                   [default 10]            
-       --sect-size <arg>    mutate over sections of X instructions                [default 1]             
-       --ins <arg>          relative chance of mutation insertion                 [default 1]             
-       --del <arg>          relative chance of mutation deletion                  [default 1]             
-       --swap <arg>         relative chance of mutation swap                      [default 1]             
-       --cross-rate <arg>   percentage of population generated through crossover  [default 0.1]           
-       --tour               use tournament selection for sampling                                         
-       --tour-size <arg>    tournament size                                       [default 3]             
-       --java               operate on a Java .class file                                                 
-       --class-nest <arg>   class directory nesting for java .class files                                 
-   #+end_example
-   An example usage may look like the following.
-   : nice modify.clj --tour --tour-size 3 --cross-rate 0.1 --pop 400 gcd.s
-   
-   After each generation the best individual will be written to a
-   =.clj= file of Clojure source code.  These individuals can be
-   loaded into a Clojure repl from which they can be inspected, and
-   can be written to assembly files (see [[file:code.org::assembly-manipulation][Assembly Manipulation]] and
-   [[file:code.org::utility-functions][Utility Functions]]).
-   
-* COMMENT Tasks [25/27]
-** step by step for running through this whole process
-   :PROPERTIES:
-   :ID:       64e5c886-ed5f-4466-80e0-298cffd9d890
-   :END:
+** application of technique
 1) compile to asm
    : gcc -S source.c
 2) generate executable
@@ -1230,19 +1122,31 @@ solution is found.
       magnitude more iterations (e.g. =seq 1000= instead of =seq 100=)
 5) turn off =opcontrol=
    : sudo opcontrol --shutdown
-6) alright, the preparation is complete.  a single run can be
-   performed with the following command
+6) Once the good and bad path files have been created the actual
+   evolution of program variants can begin.  Once again it is worth
+   mentioning that this step should be performed inside of a virtual
+   machine as arbitrary assembly code will be executed, and will in
+   all likelihood take actions which would be considered malicious one
+   inclined to assign motives to artifacts of random mutation.
+   
+   The =modify.clj= script controls the entire evolution process.
+   It's build-in help command should be sufficient to describe it's
+   usage.  As with the rest of this project, everything should be
+   considered to be in early alpha development, and the source-code is
+   the ultimate form of documentation.  A single run can be performed
+   with the following command
    : nice modify.clj --tour --tour-size 2 --pop 400 --cross-rate 0.1 source.s
    try
    : modify.clj help
    for more command line options.
    
-   alternately a suite of 100 executions can be performed by first
-   creating the variants directory
-   : mkdir variants
-   and then running using the =test-asm.sh= shell script.
-   : test-asm.sh source.s
-
+   After each generation the best individual will be written to a
+   =.clj= file of Clojure source code.  These individuals can be
+   loaded into a Clojure repl from which they can be inspected, and
+   can be written to assembly files (see [[file:code.org::assembly-manipulation][Assembly Manipulation]] and
+   [[file:code.org::utility-functions][Utility Functions]]).
+   
+* COMMENT Tasks [25/27]
 ** path difference
    :PROPERTIES:
    :ID:       d451e88d-e7ff-4364-a6f5-c0b61fa35b19
