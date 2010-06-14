@@ -1203,11 +1203,11 @@ solution is found.
    :ID:       64e5c886-ed5f-4466-80e0-298cffd9d890
    :END:
 1) compile to asm
-   : gcc -S source.c source.s
+   : gcc -S source.c
 2) generate executable
    : gcc -o source source.s
 3) generate memory mapping for good/bad paths
-   : clj mem-mapping.clj source.s source
+   : mem-mapping.clj source.s source
 4) sample execution with =opannotate= for both the good and bad test cases
    1) stop the daemon
       : sudo opcontrol --shutdown
@@ -1222,7 +1222,7 @@ solution is found.
    5) dump the annotations to lines in the assembly file and save the
       results in [good/bad].path
       : opannotate --assembly source\
-      : | clj ../opannotate-to-path.clj > [good/bad].path
+      : | ../opannotate-to-path.clj > [good/bad].path
       if =opannotate= hasn't sampled any points it will print the
       following line
       : error: no sample files found: profile specification too strict ?
