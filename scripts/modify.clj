@@ -20,7 +20,7 @@
    [pop         "use population size of X" 40]
    [gen         "use X genetic algorithm generations" 10]
    [cross-rate  "percentage of population generated through crossover" 0.1]
-   [sticky-cross-rate "percentage crossover to be done stickily" 0.75]
+   [sticky-cross-rate "percentage crossover to be done stickily" 0]
    [tour?       "use tournament selection for sampling"]
    [tour-size   "tournament size" 3]
    [java?       "operate on a Java .class file"]
