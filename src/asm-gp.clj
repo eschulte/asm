@@ -409,7 +409,9 @@ section."
                   (apply
                    s/sh
                    (concat
-                    (apply list compiler compiler-flags)
+                    (if (list? compiler-flags)
+                      (cons compiler compiler-flags)
+                      (apply list compiler compiler-flags))
                     (list "-o" asm-bin asm-source :return-map true)))))
         (s/sh "chmod" "+x" asm-bin)
         asm-bin))))

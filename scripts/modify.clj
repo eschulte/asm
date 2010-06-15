@@ -49,7 +49,7 @@
     (def bad-mult (to_int bad-factor))
     (def compiler gcc)
     (def compiler-flags (if (= "indent" ldflags)
-                          '("-g" "/home/eschulte/research/genprog/fix-investigation/indent/args.o" "/home/eschulte/research/genprog/fix-investigation/indent/backup.o" "/home/eschulte/research/genprog/fix-investigation/indent/comments.o" "/home/eschulte/research/genprog/fix-investigation/indent/globs.o" "/home/eschulte/research/genprog/fix-investigation/indent/indent.o" "/home/eschulte/research/genprog/fix-investigation/indent/io.o" "/home/eschulte/research/genprog/fix-investigation/indent/lexi.o" "/home/eschulte/research/genprog/fix-investigation/indent/memcpy.o" "/home/eschulte/research/genprog/fix-investigation/indent/parse.o")
+                          '("-g" "/home/eschulte/research/genprog/fix-investigation/indent/args.o" "/home/eschulte/research/genprog/fix-investigation/indent/backup.o" "/home/eschulte/research/genprog/fix-investigation/indent/comments.o" "/home/eschulte/research/genprog/fix-investigation/indent/globs.o" "/home/eschulte/research/genprog/fix-investigation/indent/io.o" "/home/eschulte/research/genprog/fix-investigation/indent/lexi.o" "/home/eschulte/research/genprog/fix-investigation/indent/memcpy.o" "/home/eschulte/research/genprog/fix-investigation/indent/parse.o")
                           ldflags))
     (def test-dir "./")
     (def test-timeout 2000)
