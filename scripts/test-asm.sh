@@ -5,7 +5,7 @@
 # cd gcd
 # ../test-asm.sh gcd.c
 ###############################
-for ((run=16;run<100;run++)) ; do
+for ((run=0;run<100;run++)) ; do
   for i in `seq 10`; do
       for j in `seq 10`; do
           j=`expr $j - 1`
