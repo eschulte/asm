@@ -123,7 +123,7 @@ http://www.fatvat.co.uk/2009/05/levenshtein-distance-in-clojure-ii.html
                (edit-distance (rest seq1) (rest seq2))) ;; substitution
             (inc (edit-distance (rest seq1) seq2))    ;; insertion
             (inc (edit-distance seq1 (rest seq2)))))) ;; deletion
-  
+
   (def edit-distance (memoize edit-distance-int))
 #+end_src
 
@@ -152,18 +152,18 @@ http://www.fatvat.co.uk/2009/05/levenshtein-distance-in-clojure-ii.html
   (defn shuffle
     "Shuffles coll using a Java ArrayList." [coll]
     (let [l (ArrayList. coll)] (Collections/shuffle l) (seq l)))
-  
+
   (defn place
     "Pick a random location from a sequence"
     [lst]
     (rand-int (count lst)))
-  
+
   (defn pick
     "Pick and return a random element from a sequence."
     [lst] (nth lst (place lst)))
-  
+
   (def point-neighborhood 4)
-  
+
   (defn points-around
     "Return points in FROM located around POINT, ensure an even balance."
     ([from point] (points-around from point point-neighborhood))
@@ -173,7 +173,7 @@ http://www.fatvat.co.uk/2009/05/levenshtein-distance-in-clojure-ii.html
                                (list neighborhood point
                                      (- (count from) point))))]
          (take (+ 1 (* 2 neigh)) (drop (- point neigh) from)))))
-  
+
   (defn weighted-place
     "Pick a random location in an asm individual weighted by the
      associated bad-path."
@@ -189,7 +189,7 @@ http://www.fatvat.co.uk/2009/05/levenshtein-distance-in-clojure-ii.html
               (concat (repeat (m/ceil (or (weight-key (first asm)) 0)) index)
                       assoc))))
          0 asm (range (count asm))))))
-  
+
   (defn weighted-pick
     "Return a random element in an asm individual weighted by the
      associated bad-path"
@@ -197,7 +197,7 @@ http://www.fatvat.co.uk/2009/05/levenshtein-distance-in-clojure-ii.html
        (nth asm (weighted-place asm)))
     ([asm weight-key]
        (nth asm (weighted-place asm weight-key))))
-  
+
   (defn homologous-place
     "Return point in FROM whose surroundings are most like EXEMPLAR."
     [from exemplar]
@@ -549,11 +549,11 @@ probability =sticky-crossover-rate=.
          mother
          (let [mother (:representation mother) father (:representation father)]
            ;; homologous -- similar instructions
-           ;; 
+           ;;
            ;; 1) pick two spots in mother
            ;; 2) find similar spots in father
            ;; 3) proceed with normal combination method
-           ;; 
+           ;;
            (let [mid-m (weighted-place mother)
                  ;; 1
                  mother-l (take mid-m mother) mother-r (drop mid-m mother)
@@ -978,11 +978,11 @@ new fitness and compilation functions
      [java?       "operate on a Java .class file"]
      [class-nest  "class directory nesting for java .class files"]
      rest]
-  
+
     ;; ;; over-define some functions for working with Java .class files
     ;; (when java?
     ;;   (load-file "/home/eschulte/research/genprog/asm/src/bytecode-gp.clj"))
-  
+
     ;; define GP parameters
     (let [to_int (fn [in] (if (string? in)
                             (Integer/parseInt in)
@@ -1008,7 +1008,7 @@ new fitness and compilation functions
       (def test-good good)
       (def test-bad bad)
       (def java-class-nest class-nest))
-  
+
     ;; save configuration to file
     (write-obj "config.clj"
                (list
@@ -1029,7 +1029,7 @@ new fitness and compilation functions
                 "test-timeout" 2000
                 "test-good" good
                 "test-bad" bad))
-  
+
     ;; run evolution
     (doseq [baseline-path rest]
       (let [fitness-cache (ref (if fit-cache (read-obj fit-cache) {}))
@@ -1132,7 +1132,7 @@ solution is found.
    machine as arbitrary assembly code will be executed, and will in
    all likelihood take actions which would be considered malicious one
    inclined to assign motives to artifacts of random mutation.
-   
+
    The =modify.clj= script controls the entire evolution process.
    It's build-in help command should be sufficient to describe it's
    usage.  As with the rest of this project, everything should be
@@ -1143,14 +1143,53 @@ solution is found.
    try
    : modify.clj help
    for more command line options.
-   
+
    After each generation the best individual will be written to a
    =.clj= file of Clojure source code.  These individuals can be
    loaded into a Clojure repl from which they can be inspected, and
    can be written to assembly files (see [[file:code.org::assembly-manipulation][Assembly Manipulation]] and
    [[file:code.org::utility-functions][Utility Functions]]).
-   
-* COMMENT Tasks [25/27]
+
+* COMMENT Tasks [26/28]
+** DONE send alerts when a run completes
+send an alert with
+: ./mailer |telnet mail.cs.unm.edu 25
+#+begin_src sh :tangle script/mailer :shebang #!/bin/bash
+  # send email alerts for down'd runs
+  #
+  TO=schulte.eric@gmail.com
+  FROM=eschulte@cs.unm.edu
+  
+  lines=(
+      "HELO `hostname`"
+      "MAIL FROM: $FROM"
+      "RCPT TO: $TO"
+      "DATA"
+      "SUBJECT: run down on `hostname`"
+      ""
+      "run on ------- `hostname`"
+      "is down at --- `date`"
+      "."
+      "QUIT"
+  )
+  
+  # wait until the test-asm.sh script is finished
+  procs=`ps auxwww|grep -i test-asm|grep -v grep|wc|awk '{print $1}'`;
+  while [ $procs -ge 1 ]; do
+      sleep 30;
+      procs=`ps auxwww|grep -i test-asm|grep -v grep|wc|awk '{print $1}'`;
+  done
+  echo "she's down... `date`"
+  
+  # actually send the email
+  (
+      for line in ${!lines[*]}; do
+          echo ${lines[$line]};
+          sleep 2;
+      done
+  ) | telnet mail.cs.unm.edu 25
+#+end_src
+
 ** path difference
    :PROPERTIES:
    :ID:       d451e88d-e7ff-4364-a6f5-c0b61fa35b19
@@ -1170,12 +1209,12 @@ solution is found.
 looks promising
 #+begin_example
   asm-gp=> (path-diff-at "ultrix-deroff")
-  9/13                 
-  asm-gp=> (path-diff-at "ultrix-look")  
+  9/13
+  asm-gp=> (path-diff-at "ultrix-look")
   7/12
   asm-gp=> (path-diff-at "ultrix-uniq")
   2/3
-  asm-gp=> 
+  asm-gp=>
 #+end_example
 
 ** DONE script for collecting stats from many "bests"
@@ -1696,13 +1735,13 @@ compiled binary.  The mapping is written to =mapping.clj=.
 #+begin_src clojure :shebang #! /usr/bin/env clj
   (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")
   (in-ns 'asm-gp)
-  
+
   (def asm-file (:representation (read-asm (second *command-line-args*))))
   (message "asm file: %s %d lines" (second *command-line-args*) (count asm-file))
   (def bin-file (nth *command-line-args* 2))
   (message "bin-file: %s" bin-file)
   (def mapping {})
-  
+
   (defn function-lines [asm]
     (filter identity
             (map #(and (string? %)
@@ -1714,7 +1753,7 @@ compiled binary.  The mapping is written to =mapping.clj=.
     disassembled."  [path function]
     (s/sh "gdb" "--batch"
           (format "--eval-command=disassemble %s" function) path))
-  
+
   (dorun
    (map ;; for every function defined in the file
     (fn [func]
@@ -1738,7 +1777,7 @@ compiled binary.  The mapping is written to =mapping.clj=.
              (def pointer (inc pointer)))
           lines))))
     (function-lines asm-file)))
-  
+
   (write-obj "mapping.clj" mapping)
 #+end_src
 
