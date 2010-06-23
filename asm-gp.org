@@ -1190,6 +1190,47 @@ send an alert with
   ) | telnet mail.cs.unm.edu 25
 #+end_src
 
+** restart the reaper if it terminates
+#+begin_src sh
+  #
+  # restart the reaper if it terminates
+  #
+  TO=schulte.eric@gmail.com
+  FROM=eschulte@cs.unm.edu
+  
+  lines=(
+      "HELO `hostname`"
+      "MAIL FROM: $FROM"
+      "RCPT TO: $TO"
+      "DATA"
+      "SUBJECT: reaper terminated on `hostname`"
+      ""
+      "reaper dead on --- `hostname`"
+      "terminated at ---- `date`"
+      ""
+      "starting up another instance of reaper.rb"
+      "."
+      "QUIT"
+  )
+  
+  # wait until the test-asm.sh script is finished
+  procs=`ps auxwww|grep -i reaper|grep -v grep|wc|awk '{print $1}'`;
+  while [ $procs -ge 1 ]; do
+      sleep 30;
+      procs=`ps auxwww|grep -i reaper|grep -v grep|wc|awk '{print $1}'`;
+  done
+  
+  echo "we lost the reaper at `date`"
+  
+  # actually send the email
+  (
+      for line in ${!lines[*]}; do
+          echo ${lines[$line]};
+          sleep 2;
+      done
+  ) | telnet mail.cs.unm.edu 25
+#+end_src
+
 ** path difference
    :PROPERTIES:
    :ID:       d451e88d-e7ff-4364-a6f5-c0b61fa35b19
