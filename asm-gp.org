@@ -267,7 +267,7 @@ http://www.fatvat.co.uk/2009/05/levenshtein-distance-in-clojure-ii.html
   (def use-tournament false)
   (def max-section-size 1)
   (def crossover-rate 0.1)
-  (def sticky-crossover-rate 0.75)
+  (def sticky-crossover-rate 1.0)
   (def fitness-cache-path
        (.getPath (f/file-str "~/research/code/data/fitness-cache.clj")))
   (def good-mult 1)
@@ -978,11 +978,11 @@ new fitness and compilation functions
      [java?       "operate on a Java .class file"]
      [class-nest  "class directory nesting for java .class files"]
      rest]
-
+  
     ;; ;; over-define some functions for working with Java .class files
     ;; (when java?
     ;;   (load-file "/home/eschulte/research/genprog/asm/src/bytecode-gp.clj"))
-
+  
     ;; define GP parameters
     (let [to_int (fn [in] (if (string? in)
                             (Integer/parseInt in)
@@ -1000,15 +1000,15 @@ new fitness and compilation functions
       (def good-mult (to_int good-factor))
       (def bad-mult (to_int bad-factor))
       (def compiler gcc)
-      (def compiler-flags (if (= "indent" ldflags)
-                            '("-g" "/home/eschulte/research/genprog/fix-investigation/indent/args.o" "/home/eschulte/research/genprog/fix-investigation/indent/backup.o" "/home/eschulte/research/genprog/fix-investigation/indent/comments.o" "/home/eschulte/research/genprog/fix-investigation/indent/globs.o" "/home/eschulte/research/genprog/fix-investigation/indent/io.o" "/home/eschulte/research/genprog/fix-investigation/indent/lexi.o" "/home/eschulte/research/genprog/fix-investigation/indent/memcpy.o" "/home/eschulte/research/genprog/fix-investigation/indent/parse.o")
+      (def compiler-flags (if (= "null" ldflags)
+                            '("-lpthread" "-g" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/cgi.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/files.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/main.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/win32.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/config.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/format.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/server.o")
                             ldflags))
       (def test-dir "./")
       (def test-timeout 2000)
       (def test-good good)
       (def test-bad bad)
       (def java-class-nest class-nest))
-
+  
     ;; save configuration to file
     (write-obj "config.clj"
                (list
@@ -1029,7 +1029,7 @@ new fitness and compilation functions
                 "test-timeout" 2000
                 "test-good" good
                 "test-bad" bad))
-
+  
     ;; run evolution
     (doseq [baseline-path rest]
       (let [fitness-cache (ref (if fit-cache (read-obj fit-cache) {}))
@@ -1154,7 +1154,7 @@ solution is found.
 ** DONE send alerts when a run completes
 send an alert with
 : ./mailer |telnet mail.cs.unm.edu 25
-#+begin_src sh :tangle script/mailer :shebang #!/bin/bash
+#+begin_src sh :tangle scripts/mailer :shebang #!/bin/bash
   # send email alerts for down'd runs
   #
   TO=schulte.eric@gmail.com

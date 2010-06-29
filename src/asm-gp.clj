@@ -160,7 +160,7 @@
 (def use-tournament false)
 (def max-section-size 1)
 (def crossover-rate 0.1)
-(def sticky-crossover-rate 0.75)
+(def sticky-crossover-rate 1.0)
 (def fitness-cache-path
      (.getPath (f/file-str "~/research/code/data/fitness-cache.clj")))
 (def good-mult 1)
@@ -366,11 +366,11 @@ section."
        mother
        (let [mother (:representation mother) father (:representation father)]
          ;; homologous -- similar instructions
-         ;; 
+         ;;
          ;; 1) pick two spots in mother
          ;; 2) find similar spots in father
          ;; 3) proceed with normal combination method
-         ;; 
+         ;;
          (let [mid-m (weighted-place mother)
                ;; 1
                mother-l (take mid-m mother) mother-r (drop mid-m mother)
