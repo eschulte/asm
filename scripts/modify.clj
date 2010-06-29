@@ -49,7 +49,9 @@
     (def bad-mult (to_int bad-factor))
     (def compiler gcc)
     (def compiler-flags (if (= "null" ldflags)
-                          '("-lpthread" "-g" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/cgi.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/files.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/main.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/win32.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/config.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/format.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/server.o")
+                          (do
+                            (println "good null setup")
+                            '("-lpthread" "-g" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/cgi.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/files.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/main.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/win32.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/config.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/format.o" "/home/eschulte/research/genprog/fix-investigation/nullhttpd/src/server.o"))
                           ldflags))
     (def test-dir "./")
     (def test-timeout 2000)
