@@ -1,0 +1,36 @@
+#!/bin/bash
+
+
+# send email alerts for down'd runs
+#
+TO=schulte.eric@gmail.com
+FROM=eschulte@cs.unm.edu
+
+lines=(
+    "HELO `hostname`"
+    "MAIL FROM: $FROM"
+    "RCPT TO: $TO"
+    "DATA"
+    "SUBJECT: run down on `hostname`"
+    ""
+    "run on ------- `hostname`"
+    "is down at --- `date`"
+    "."
+    "QUIT"
+)
+
+# wait until the test-asm.sh script is finished
+procs=`ps auxwww|grep -i test-asm|grep -v grep|wc|awk '{print $1}'`;
+while [ $procs -ge 1 ]; do
+    sleep 30;
+    procs=`ps auxwww|grep -i test-asm|grep -v grep|wc|awk '{print $1}'`;
+done
+echo "she's down... `date`"
+
+# actually send the email
+(
+    for line in ${!lines[*]}; do
+        echo ${lines[$line]};
+        sleep 2;
+    done
+) | telnet mail.cs.unm.edu 25
