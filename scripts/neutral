@@ -1,0 +1,58 @@
+#! /usr/bin/env clj
+;; -*- mode: clojure -*-
+
+(load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")
+(in-ns 'asm-gp) (require ['clojure.contrib.command-line])
+(gen-class :name neutral)
+
+(defn fitness-asm [asm test]
+  "Check if a mutant is still in the neutral space."
+  (if (:fitness asm)
+    asm
+    (let [asm (compile-asm asm) bin (:compile asm)
+          out-file (.getPath (File/createTempFile "variant" ".out"))]
+      (assoc asm
+        :fitness (if bin
+                   (try (with-timeout test-timeout (s/sh test bin out-file))
+                        (count (f/read-lines out-file))
+                        (catch java.util.concurrent.TimeoutException e 0))
+                   0)))))
+
+(defn to-int [in] (if (string? in) (Integer/parseInt in) in))
+(def counter (ref 0))
+(def options [[compiler "use X to compile C files" "gcc"]
+              [cflags   "pass X as compiler flags during compiling" nil]
+              [test     "use X to test quality of a variant" "./test.sh"]
+              [test-num "number of lines returned by a successful test" 10]
+              [out-num  "desired number of outputs" 1000]
+              rest])
+
+(with-command-line (rest *command-line-args*)
+  "explore neutral spaces:
+
+  neutral [options...] [initial populations...]
+
+1. takes an initial population from STDIN
+2. cycle through working individuals in the population generating
+   mutants until pop total successful mutants have been found
+3. dump successful mutants to STDOUT as they are found"
+  options
+  
+  ;; write out configuration as commented clojure
+  (doseq [pair (butlast options)]
+    (println (format ";; %S %S") (first pair) (second pair)))
+
+  ;; cycle through pop until out-num valid individuals are found
+  (let [onum (to-int out-num) tnum (to-int test-num) (test-path (.getPath test))]
+    (loop [pop (cycle (filter #(= (:fitness %) tnum)
+                              (map #(fitness-asm (read-obj %)) rest)))]
+      (binding [*out* *err*]
+        (if (empty pop)
+          (println "No valid individuals!")
+          (println (format "Starting with %d individuals" (count pop)))))
+      (when (not (>= counter onum))
+        (let [mutant (fitness-asm (mutate-asm (first pop)) test-path)]
+          (when (= (:fittness mutant) tnum)
+            (println (pr-str mutant))
+            (dosync (refset counter (inc counter)))))
+        (recur (tail pop))))))
