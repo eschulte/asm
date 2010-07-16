@@ -1,9 +1,10 @@
 #! /usr/bin/env clj
-;; -*- mode: clojure -*-
 
 (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")
-(in-ns 'asm-gp) (require ['clojure.contrib.command-line])
-(gen-class :name neutral)
+(in-ns 'asm-gp)
+(use 'clojure.contrib.command-line)
+(use 'clojure.contrib.pprint)
+;; (gen-class :name neutral)
 
 (defn fitness-asm [asm test]
   "Check if a mutant is still in the neutral space."
@@ -20,12 +21,6 @@
 
 (defn to-int [in] (if (string? in) (Integer/parseInt in) in))
 (def counter (ref 0))
-(def options [[compiler "use X to compile C files" "gcc"]
-              [cflags   "pass X as compiler flags during compiling" nil]
-              [test     "use X to test quality of a variant" "./test.sh"]
-              [test-num "number of lines returned by a successful test" 10]
-              [out-num  "desired number of outputs" 1000]
-              rest])
 
 (with-command-line (rest *command-line-args*)
   "explore neutral spaces:
@@ -35,24 +30,34 @@
 1. takes an initial population from STDIN
 2. cycle through working individuals in the population generating
    mutants until pop total successful mutants have been found
-3. dump successful mutants to STDOUT as they are found"
-  options
+3. dump successful mutants to STDOUT as they are found\n"
+  [[compiler "use X to compile C files" "gcc"]
+   [cflags   "pass X as compiler flags during compiling" nil]
+   [test     "use X to test quality of a variant" "./test.sh"]
+   [test-num "number of lines returned by a successful test" 10]
+   [out-num  "desired number of outputs" 1000]
+   rest]
   
   ;; write out configuration as commented clojure
-  (doseq [pair (butlast options)]
-    (println (format ";; %S %S") (first pair) (second pair)))
+  (println (str ";; compiler: " compiler))
+  (println (str ";;   cflags: " cflags))
+  (println (str ";;     test: " test))
+  (println (str ";; test-num: " test-num))
+  (println (str ";;  out-num: " out-num))
+  (println (str ";;     rest: " (apply str rest)))
 
   ;; cycle through pop until out-num valid individuals are found
-  (let [onum (to-int out-num) tnum (to-int test-num) (test-path (.getPath test))]
+  (let [onum (to-int out-num) tnum (to-int test-num)
+        test-path (.getPath (f/file-str test))]
     (loop [pop (cycle (filter #(= (:fitness %) tnum)
                               (map #(fitness-asm (read-obj %)) rest)))]
       (binding [*out* *err*]
         (if (empty pop)
-          (println "No valid individuals!")
+          (println (format "No valid individuals!"))
           (println (format "Starting with %d individuals" (count pop)))))
       (when (not (>= counter onum))
         (let [mutant (fitness-asm (mutate-asm (first pop)) test-path)]
           (when (= (:fittness mutant) tnum)
-            (println (pr-str mutant))
-            (dosync (refset counter (inc counter)))))
-        (recur (tail pop))))))
+            (println (pr-str mutant)) ;; (println (pprint mutant))
+            (dosync (ref-set counter (inc counter)))))
+        (recur (rest pop))))))
