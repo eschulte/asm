@@ -36,25 +36,25 @@
    [timeout  "timeout tests after X seconds" 4000]
    rest]
   
-  ;; write out configuration as commented clojure
-  (println (str ";; compiler: " compiler))
-  (println (str ";;   cflags: " cflags))
-  (println (str ";;     test: " script))
-  (println (str ";; test-num: " test-num))
-  (println (str ";;  out-num: " out-num))
-  (println (str ";;  timeout: " timeout))
-  (println (str ";; init-pop: " (first rest)))
-
-  (println "(")
-  (let [pop (cycle (filter #(= (:fitness %) (to-int test-num))
-                           (map #(ntrl? % script (to-int timeout))
-                                (read-obj (first rest)))))]
+  (let [pop (filter #(= (:fitness %) (to-int test-num))
+                    (pmap #(if (:fitness %) % (ntrl? % script (to-int timeout)))
+                          (read-obj (first rest))))]
+    ;; write out configuration as commented clojure
+    (println (str ";; compiler: " compiler))
+    (println (str ";;   cflags: " cflags))
+    (println (str ";;     test: " script))
+    (println (str ";; test-num: " test-num))
+    (println (str ";;  out-num: " out-num))
+    (println (str ";;  timeout: " timeout))
+    (println (str ";; init-pop: " (first rest)))
+    (println (str ";; init-fit: " (count pop)))
+    (println "(")
     (if (empty? pop)
       (binding [*out* *err*] (println (format "No working individuals!")))
       (dorun
        (take (to-int out-num)
              (filter #(= (:fitness %) (to-int test-num))
-                     (map #(println (pr-str %))
+                     (map #(do (println (pr-str %)) %)
                           (pmap #(ntrl? (mutate-asm %) script (to-int timeout))
                                 (cycle pop)))))))
     (println ")")))
