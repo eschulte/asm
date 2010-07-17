@@ -1191,9 +1191,9 @@ solution is found.
      mutants until pop total successful mutants have been found
   3. dump successful mutants to STDOUT as they are found\n"
     [[compiler "use X to compile C files" "gcc"]
-     [cflags   "pass X as compiler flags during compiling" nil]
+     [cflags   "pass X flags to compiler" nil]
      [test     "use X to test quality of a variant" "./test.sh"]
-     [test-num "number of lines returned by a successful test" 10]
+     [test-num "number of tests to be passed" 10]
      [out-num  "desired number of outputs" 1000]
      rest]
     
@@ -1203,23 +1203,41 @@ solution is found.
     (println (str ";;     test: " test))
     (println (str ";; test-num: " test-num))
     (println (str ";;  out-num: " out-num))
-    (println (str ";;     rest: " (apply str rest)))
   
     ;; cycle through pop until out-num valid individuals are found
     (let [onum (to-int out-num) tnum (to-int test-num)
           test-path (.getPath (f/file-str test))]
       (loop [pop (cycle (filter #(= (:fitness %) tnum)
-                                (map #(fitness-asm (read-obj %)) rest)))]
+                                (map #(fitness-asm (read-obj %) test) rest)))]
         (binding [*out* *err*]
           (if (empty pop)
-            (println (format "No valid individuals!"))
-            (println (format "Starting with %d individuals" (count pop)))))
-        (when (not (>= counter onum))
-          (let [mutant (fitness-asm (mutate-asm (first pop)) test-path)]
-            (when (= (:fittness mutant) tnum)
-              (println (pr-str mutant)) ;; (println (pprint mutant))
-              (dosync (ref-set counter (inc counter)))))
-          (recur (rest pop))))))
+            (println (format "No working individuals!"))
+            (do
+              (println (format "Starting with %d working individuals" (count pop)))
+              (when (not (>= @counter onum))
+                (let [mutant (fitness-asm (mutate-asm (first pop)) test-path)]
+                  (when (= (:fittness mutant) tnum)
+                    (println (pr-str mutant)) ;; (println (pprint mutant))
+                    (dosync (ref-set counter (inc @counter)))))
+                (recur (rest pop)))))))))
+#+end_src
+
+the related =test.sh= script
+#+begin_src sh
+  #!/bin/bash
+  #
+  # check that $1 can successfully sort the output of in input files in
+  # test/$i.in by comparing the salient output against test/$i.out
+  #
+  # mark each passed test with a line in $2
+  #
+  rm -rf $2
+  for i in `seq 2`; do
+      cat test/$i.in |xargs ./$1 >& $i.my
+      diff -wBq test/$i.out $i.my && (echo "passed $i" >> $2)
+      rm -rf $i.my
+  done
+  exit 0
 #+end_src
 
 ** backward chaining
