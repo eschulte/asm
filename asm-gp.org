@@ -1165,18 +1165,18 @@ solution is found.
   (use 'clojure.contrib.pprint)
   ;; (gen-class :name neutral)
   
-  (defn fitness-asm [asm test]
+  (defn neutral-asm [asm script]
     "Check if a mutant is still in the neutral space."
-    (if (:fitness asm)
-      asm
-      (let [asm (compile-asm asm) bin (:compile asm)
-            out-file (.getPath (File/createTempFile "variant" ".out"))]
-        (assoc asm
-          :fitness (if bin
-                     (try (with-timeout test-timeout (s/sh test bin out-file))
+    (let [asm (compile-asm asm)  bin (:compile asm)
+          out-file (.getPath (File/createTempFile "variant" ".out"))]
+      (assoc asm
+        :fitness (if bin
+                   (try (s/sh script bin out-file)
+                        (if (.exists (java.io.File. out-file))
                           (count (f/read-lines out-file))
-                          (catch java.util.concurrent.TimeoutException e 0))
-                     0)))))
+                          0)
+                        (catch Exception e 0))
+                   0))))
   
   (defn to-int [in] (if (string? in) (Integer/parseInt in) in))
   (def counter (ref 0))
@@ -1192,7 +1192,7 @@ solution is found.
   3. dump successful mutants to STDOUT as they are found\n"
     [[compiler "use X to compile C files" "gcc"]
      [cflags   "pass X flags to compiler" nil]
-     [test     "use X to test quality of a variant" "./test.sh"]
+     [script     "use X to test quality of a variant" "./test.sh"]
      [test-num "number of tests to be passed" 10]
      [out-num  "desired number of outputs" 1000]
      rest]
@@ -1200,40 +1200,39 @@ solution is found.
     ;; write out configuration as commented clojure
     (println (str ";; compiler: " compiler))
     (println (str ";;   cflags: " cflags))
-    (println (str ";;     test: " test))
+    (println (str ";;     test: " script))
     (println (str ";; test-num: " test-num))
     (println (str ";;  out-num: " out-num))
+    (println (str ";;   in-pop: " rest))
   
     ;; cycle through pop until out-num valid individuals are found
     (let [onum (to-int out-num) tnum (to-int test-num)
-          test-path (.getPath (f/file-str test))]
-      (loop [pop (cycle (filter #(= (:fitness %) tnum)
-                                (map #(fitness-asm (read-obj %) test) rest)))]
-        (binding [*out* *err*]
-          (if (empty pop)
-            (println (format "No working individuals!"))
-            (do
-              (println (format "Starting with %d working individuals" (count pop)))
-              (when (not (>= @counter onum))
-                (let [mutant (fitness-asm (mutate-asm (first pop)) test-path)]
-                  (when (= (:fittness mutant) tnum)
-                    (println (pr-str mutant)) ;; (println (pprint mutant))
-                    (dosync (ref-set counter (inc @counter)))))
-                (recur (rest pop)))))))))
+          population (cycle (filter #(= (:fitness %) tnum)
+                                    (map #(neutral-asm % script)
+                                         (read-obj (first rest)))))]
+      (if (empty? population)
+        (binding [*out* *err*] (println (format "No working individuals!")))
+        (loop [pop population]
+          (when (< @counter onum)
+            (let [mutant (neutral-asm (mutate-asm (first pop)) script)]
+              (when (= (:fitness mutant) tnum)
+                (println (pr-str mutant)) ;; (println (pprint mutant))
+                (dosync (ref-set counter (inc @counter)))))
+            (recur (rest pop)))))))
 #+end_src
 
 the related =test.sh= script
-#+begin_src sh
-  #!/bin/bash
-  #
+#+begin_src sh :tangle ../neutral/test.sh :shebang #!/bin/bash
   # check that $1 can successfully sort the output of in input files in
   # test/$i.in by comparing the salient output against test/$i.out
   #
   # mark each passed test with a line in $2
   #
+  ulimit -t 4
   rm -rf $2
-  for i in `seq 2`; do
-      cat test/$i.in |xargs ./$1 >& $i.my
+  for i in `seq 10`; do
+      cat test/$i.in |xargs $1 >& $i.my
+      cat $i.my
       diff -wBq test/$i.out $i.my && (echo "passed $i" >> $2)
       rm -rf $i.my
   done
