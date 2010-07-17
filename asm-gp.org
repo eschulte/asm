@@ -1213,9 +1213,9 @@ solution is found.
         (dorun
          (take (to-int out-num)
                (filter #(= (:fitness %) (to-int test-num))
-                       (cycle (map #(let [v (neutral? (mutate-asm %)
-                                                      script (to-int timeout))]
-                                      (println (pr-str v)) v) pop))))))
+                       (map #(let [v (neutral? (mutate-asm %)
+                                               script (to-int timeout))]
+                               (println (pr-str v)) v) (cycle pop))))))
       (println ")")))
 #+end_src
 
