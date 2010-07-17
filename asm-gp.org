@@ -1148,8 +1148,8 @@ solution is found.
    can be written to assembly files (see [[file:code.org::assembly-manipulation][Assembly Manipulation]] and
    [[file:code.org::utility-functions][Utility Functions]]).
 
-* COMMENT Tasks [26/29]
-** TODO exploration of neutral space
+* COMMENT Tasks [27/29]
+** DONE exploration of neutral space
    :PROPERTIES:
    :CUSTOM_ID: exploration-of-neutral-space
    :END:
@@ -1160,22 +1160,23 @@ solution is found.
 
 #+begin_src clojure :tangle scripts/neutral :shebang #! /usr/bin/env clj
   (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")
-  (in-ns 'asm-gp)
-  (use 'clojure.contrib.command-line)
+  (in-ns 'asm-gp)  (use 'clojure.contrib.command-line)
   
   (defn to-int [n] (if (string? n) (Integer/parseInt n) n))
   
-  (defn neutral? [asm script]
+  (defn neutral? [asm script timeout]
     "Check if a mutant is still in the neutral space."
     (let [asm (compile-asm asm)  bin (:compile asm)
           out-file (.getPath (File/createTempFile "variant" ".out"))]
-      (assoc asm :fitness (if bin
-                            (try (s/sh script bin out-file)
-                                 (if (.exists (java.io.File. out-file))
-                                   (count (f/read-lines out-file))
-                                   0)
-                                 (catch Exception e 0))
-                            0))))
+      (assoc asm
+        :fitness (if bin
+                   (try
+                    (with-timeout timeout (s/sh script bin out-file))
+                    (if (.exists (java.io.File. out-file))
+                      (count (f/read-lines out-file))
+                      0)
+                    (catch Exception e 0))
+                   0))))
   
   (with-command-line (rest *command-line-args*)
     "explore neutral spaces:
@@ -1190,7 +1191,8 @@ solution is found.
      [cflags   "pass X flags to compiler" nil]
      [script   "use X to test quality of a variant" "./test.sh"]
      [test-num "number of tests to be passed" 10]
-     [out-num  "desired number of outputs" 1000]
+     [out-num  "desired number of successful outputs" 1000]
+     [timeout  "timeout tests after X seconds" 4000]
      rest]
     
     ;; write out configuration as commented clojure
@@ -1199,16 +1201,22 @@ solution is found.
     (println (str ";;     test: " script))
     (println (str ";; test-num: " test-num))
     (println (str ";;  out-num: " out-num))
-    
+    (println (str ";;  timeout: " timeout))
+    (println (str ";; init-pop: " (first rest)))
+  
+    (println "(")
     (let [pop (cycle (filter #(= (:fitness %) (to-int test-num))
-                             (map #(neutral? % script) (read-obj (first rest)))))]
+                             (map #(neutral? % script (to-int timeout))
+                                  (read-obj (first rest)))))]
       (if (empty? pop)
         (binding [*out* *err*] (println (format "No working individuals!")))
         (dorun
          (take (to-int out-num)
                (filter #(= (:fitness %) (to-int test-num))
-                       (cycle (map #(let [v (neutral? (mutate-asm %) script)]
-                                      (println (pr-str v)) v) pop))))))))
+                       (cycle (map #(let [v (neutral? (mutate-asm %)
+                                                      script (to-int timeout))]
+                                      (println (pr-str v)) v) pop))))))
+      (println ")")))
 #+end_src
 
 the related =test.sh= script
@@ -1222,7 +1230,6 @@ the related =test.sh= script
   rm -rf $2
   for i in `seq 10`; do
       cat test/$i.in |xargs $1 >& $i.my
-      cat $i.my
       diff -wBq test/$i.out $i.my && (echo "passed $i" >> $2)
       rm -rf $i.my
   done
