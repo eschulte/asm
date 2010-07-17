@@ -3,24 +3,20 @@
 (load-file "/home/eschulte/research/genprog/asm/src/asm-gp.clj")
 (in-ns 'asm-gp)
 (use 'clojure.contrib.command-line)
-(use 'clojure.contrib.pprint)
-;; (gen-class :name neutral)
 
-(defn neutral-asm [asm script]
+(defn to-int [n] (if (string? n) (Integer/parseInt n) n))
+
+(defn neutral? [asm script]
   "Check if a mutant is still in the neutral space."
   (let [asm (compile-asm asm)  bin (:compile asm)
         out-file (.getPath (File/createTempFile "variant" ".out"))]
-    (assoc asm
-      :fitness (if bin
-                 (try (s/sh script bin out-file)
-                      (if (.exists (java.io.File. out-file))
-                        (count (f/read-lines out-file))
-                        0)
-                      (catch Exception e 0))
-                 0))))
-
-(defn to-int [in] (if (string? in) (Integer/parseInt in) in))
-(def counter (ref 0))
+    (assoc asm :fitness (if bin
+                          (try (s/sh script bin out-file)
+                               (if (.exists (java.io.File. out-file))
+                                 (count (f/read-lines out-file))
+                                 0)
+                               (catch Exception e 0))
+                          0))))
 
 (with-command-line (rest *command-line-args*)
   "explore neutral spaces:
@@ -33,7 +29,7 @@
 3. dump successful mutants to STDOUT as they are found\n"
   [[compiler "use X to compile C files" "gcc"]
    [cflags   "pass X flags to compiler" nil]
-   [script     "use X to test quality of a variant" "./test.sh"]
+   [script   "use X to test quality of a variant" "./test.sh"]
    [test-num "number of tests to be passed" 10]
    [out-num  "desired number of outputs" 1000]
    rest]
@@ -44,21 +40,13 @@
   (println (str ";;     test: " script))
   (println (str ";; test-num: " test-num))
   (println (str ";;  out-num: " out-num))
-  (println (str ";;   in-pop: " rest))
-
-  ;; cycle through pop until out-num valid individuals are found
-  (let [onum (to-int out-num) tnum (to-int test-num)
-        population (cycle (filter #(= (:fitness %) tnum)
-                                  (map #(neutral-asm % script)
-                                       (read-obj (first rest)))))]
-    (if (empty? population)
+  
+  (let [pop (cycle (filter #(= (:fitness %) (to-int test-num))
+                           (map #(neutral? % script) (read-obj (first rest)))))]
+    (if (empty? pop)
       (binding [*out* *err*] (println (format "No working individuals!")))
-      (loop [pop population]
-        (when (< @counter onum)
-          (let [mutant (neutral-asm (mutate-asm (first pop)) script)]
-            (when (= (:fitness mutant) tnum)
-              (println (pr-str mutant))
-              ;; (println (pprint mutant))
-              (dosync (ref-set counter (inc @counter)))))
-          (println "about to recur")
-          (recur (rest pop)))))))
+      (dorun
+       (take (to-int out-num)
+             (filter #(= (:fitness %) (to-int test-num))
+                     (cycle (map #(let [v (neutral? (mutate-asm %) script)]
+                                    (println (pr-str v)) v) pop))))))))
