@@ -5,7 +5,7 @@
 
 (defn to-int [n] (if (string? n) (Integer/parseInt n) n))
 
-(defn neutral? [asm script timeout]
+(defn ntrl? [asm script timeout]
   "Check if a mutant is still in the neutral space."
   (let [asm (compile-asm asm)  bin (:compile asm)
         out-file (.getPath (File/createTempFile "variant" ".out"))]
@@ -47,14 +47,14 @@
 
   (println "(")
   (let [pop (cycle (filter #(= (:fitness %) (to-int test-num))
-                           (map #(neutral? % script (to-int timeout))
+                           (map #(ntrl? % script (to-int timeout))
                                 (read-obj (first rest)))))]
     (if (empty? pop)
       (binding [*out* *err*] (println (format "No working individuals!")))
       (dorun
        (take (to-int out-num)
              (filter #(= (:fitness %) (to-int test-num))
-                     (map #(let [v (neutral? (mutate-asm %)
-                                             script (to-int timeout))]
-                             (println (pr-str v)) v) (cycle pop))))))
+                     (map #(println (pr-str %))
+                          (pmap #(ntrl? (mutate-asm %) script (to-int timeout))
+                                (cycle pop)))))))
     (println ")")))
