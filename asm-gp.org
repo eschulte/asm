@@ -1236,6 +1236,16 @@ the related =test.sh= script
   exit 0
 #+end_src
 
+#+begin_src sh :tangle ../neutral/runner.sh :shebang #!/bin/bash
+  #
+  # take a series of $1 steps in $2 walks in neutral space
+  #
+  for i in `seq $1`;do
+      echo "nice neutral --out-num $2 bubble.`expr $i - 1`.clj > bubble.$i.clj"
+      nice neutral --out-num $2 bubble.`expr $i - 1`.clj > bubble.$i.clj
+  done
+#+end_src
+
 ** backward chaining
 Don't run a fitness calculation for an individual until it is selected
 to perform in a tournament.
