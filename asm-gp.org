@@ -1148,7 +1148,7 @@ solution is found.
    can be written to assembly files (see [[file:code.org::assembly-manipulation][Assembly Manipulation]] and
    [[file:code.org::utility-functions][Utility Functions]]).
 
-* COMMENT Tasks [27/29]
+* COMMENT Tasks [28/30]
 ** DONE exploration of neutral space
    :PROPERTIES:
    :CUSTOM_ID: exploration-of-neutral-space
@@ -1219,32 +1219,64 @@ solution is found.
       (println ")")))
 #+end_src
 
-the related =test.sh= script
-#+begin_src sh :tangle ../neutral/test.sh :shebang #!/bin/bash
-  # check that $1 can successfully sort the output of in input files in
-  # test/$i.in by comparing the salient output against test/$i.out
-  #
-  # mark each passed test with a line in $2
-  #
-  ulimit -t 4
-  rm -rf $2
-  for i in `seq 10`; do
-      cat test/$i.in |xargs $1 >& $i.my
-      diff -wBq test/$i.out $i.my && (echo "passed $i" >> $2)
-      rm -rf $i.my
-  done
-  exit 0
-#+end_src
+- the related =test.sh= script
+  #+begin_src sh :tangle ../neutral/test.sh :shebang #!/bin/bash
+    # check that $1 can successfully sort the output of in input files in
+    # test/$i.in by comparing the salient output against test/$i.out
+    #
+    # mark each passed test with a line in $2
+    #
+    ulimit -t 4
+    rm -rf $2
+    for i in `seq 10`; do
+        cat test/$i.in |xargs ./limit $1 >& $i.my
+        diff -wBq test/$i.out $i.my && (echo "passed $i" >> $2)
+        rm -rf $i.my
+    done
+    exit 0
+  #+end_src
+- resource limiting script for safer evaluation -- =limit10.c=
+  enhanced with some restrictive calls to =setrlimit=
+  #+begin_src c :tangle scripts/limit.c
+    #include <stdio.h>
+    #include <unistd.h> 
+    #include <sys/time.h>
+    #include <sys/resource.h>
 
-#+begin_src sh :tangle ../neutral/runner.sh :shebang #!/bin/bash
-  #
-  # take a series of $2 steps in $3 walks in neutral space
-  #
-  for i in `seq $2`;do
-      echo "nice neutral --out-num $3 $1.`expr $i - 1`.clj > $1.$i.clj"
-      nice neutral --out-num $3 $1.`expr $i - 1`.clj > $1.$i.clj
-  done
-#+end_src
+    int main(int argc, char *argv[]) {
+
+      // resource/time limits
+      struct rlimit limit;
+      limit.rlim_cur = 4; limit.rlim_max = 4;
+      setrlimit(RLIMIT_CPU, &limit);       // cpu seconds
+      limit.rlim_cur = 512; limit.rlim_max = 512;
+      setrlimit(RLIMIT_NPROC, &limit);     // number of spawned processes
+      limit.rlim_cur = 512; limit.rlim_max = 512;
+      setrlimit(RLIMIT_NOFILE, &limit);    // number of open files
+      limit.rlim_cur = 65535; limit.rlim_max = 65535;
+      setrlimit(RLIMIT_FSIZE, &limit);     // max file size (bytes)
+      setrlimit(RLIMIT_MEMLOCK, &limit);   // max memory locked into RAM (bytes)
+      setrlimit(RLIMIT_STACK, &limit);     // max stack size (bytes)
+      alarm(8);                            // wall clock seconds
+
+      // run
+      execvp(argv[1], &argv[1]); 
+      return 0; 
+    } 
+  #+end_src
+- the high level experiment runner script
+  #+begin_src sh :tangle ../neutral/runner.sh :shebang #!/bin/bash
+    #
+    # take a series of $2 steps in $3 walks in neutral space
+    #
+    for i in `seq $2`;do
+        echo "nice neutral --out-num $3 $1.`expr $i - 1`.clj > $1.$i.clj"
+        nice neutral --out-num $3 $1.`expr $i - 1`.clj > $1.$i.clj
+        # bail if for some reason we didn't get enough
+        [[ $3 -ne `cat $1.$i.clj|grep -i ":fitness 10"| \
+            wc|awk '{print $1}'` ]] && break
+    done
+  #+end_src
 
 ** backward chaining
 Don't run a fitness calculation for an individual until it is selected
