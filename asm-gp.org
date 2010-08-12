@@ -1150,7 +1150,12 @@ solution is found.
    can be written to assembly files (see [[file:code.org::assembly-manipulation][Assembly Manipulation]] and
    [[file:code.org::utility-functions][Utility Functions]]).
 
-* COMMENT Tasks [28/30]
+* COMMENT Tasks [27/30]
+** TODO smaller disk footprint
+- delete binary file after evaluation
+- delete .S file after compilation
+- modify read-obj and write-obj to use compression
+
 ** DONE exploration of neutral space
    :PROPERTIES:
    :CUSTOM_ID: exploration-of-neutral-space
