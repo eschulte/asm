@@ -592,18 +592,20 @@ probability =sticky-crossover-rate=.
     (let [asm-source (.getPath (File/createTempFile "variant" ".S"))
           asm-bin (.getPath (File/createTempFile "variant" "bin"))]
       (write-asm asm-source asm)
-      (assoc asm
-        :compile
-        (when (= 0 (:exit
-                    (apply
-                     s/sh
-                     (concat
-                      (if (list? compiler-flags)
-                        (cons compiler compiler-flags)
-                        (apply list compiler compiler-flags))
-                      (list "-o" asm-bin asm-source :return-map true)))))
-          (s/sh "chmod" "+x" asm-bin)
-          asm-bin))))
+      (let [asm (assoc asm
+                  :compile
+                  (when (= 0 (:exit
+                              (apply
+                               s/sh
+                               (concat
+                                (if (list? compiler-flags)
+                                  (cons compiler compiler-flags)
+                                  (apply list compiler compiler-flags))
+                                (list "-o" asm-bin asm-source :return-map true)))))
+                    (s/sh "chmod" "+x" asm-bin)
+                    asm-bin))]
+        (.delete (java.io.File. asm-source))
+        asm)))
 #+end_src
 
 ** Fitness Evaluation
