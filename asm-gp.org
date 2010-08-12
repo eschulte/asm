@@ -1172,10 +1172,11 @@ solution is found.
         :fitness (if bin
                    (try
                     (with-timeout timeout (s/sh script bin out-file))
+                    (.delete (java.io.File.bin))
                     (if (.exists (java.io.File. out-file))
                       (count (f/read-lines out-file))
                       0)
-                    (catch Exception e 0))
+                    (catch Exception e (do (.delete (java.io.File.bin)) 0)))
                    0))))
   
   (with-command-line (rest *command-line-args*)
@@ -1226,7 +1227,6 @@ solution is found.
     #
     # mark each passed test with a line in $2
     #
-    ulimit -t 4
     rm -rf $2
     for i in `seq 10`; do
         cat test/$i.in |xargs ./limit $1 >& $i.my
