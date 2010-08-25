@@ -144,6 +144,36 @@ http://www.fatvat.co.uk/2009/05/levenshtein-distance-in-clojure-ii.html
       (with-in-str (slurp f) (read)))
   #+end_src
 
+compressed versions of the above
+#+begin_src clojure
+  (defn cwrite-obj
+    "Gzip a clojure object and write it to a file."  [f obj]
+    (with-open [#^java.io.PrintWriter w
+                (java.io.PrintWriter.
+                 (java.io.BufferedWriter.
+                  (java.io.OutputStreamWriter.
+                   (java.util.zip.GZIPOutputStream.
+                    (java.io.FileOutputStream.
+                     (java.io.File. f))))))]
+      (.print w (pr-str obj))))
+  
+  (defn cread-obj
+    "Read a g-zipped clojure object from a file" [f]
+    (with-in-str
+      (with-open [#^BufferedReader r
+                  (java.io.BufferedReader.
+                   (java.io.InputStreamReader.
+                    (java.util.zip.GZIPInputStream.
+                     (java.io.FileInputStream. f))))]
+        (let [sb (StringBuilder.)]
+          (loop [c (.read r)]
+            (if (neg? c)
+              (str sb)
+              (do (.append sb (char c))
+                  (recur (.read r)))))))
+      (read)))
+#+end_src
+
 *** random/weighted list access
     :PROPERTIES:
     :ID:       5912c566-6ed6-400e-9f4d-0c22b03fb358
@@ -589,8 +619,8 @@ probability =sticky-crossover-rate=.
   (defn compile-asm
     "Compile the asm, set it's :compile field to the path to the
     compiled binary if successful or to nil if unsuccessful."  [asm]
-    (let [asm-source (.getPath (File/createTempFile "variant" ".S"))
-          asm-bin (.getPath (File/createTempFile "variant" "bin"))]
+    (let [asm-source (.getPath (File/createTempFile "variant-" ".S"))
+          asm-bin (.getPath (File/createTempFile "variant-" ".bin"))]
       (write-asm asm-source asm)
       (let [asm (assoc asm
                   :compile
@@ -605,6 +635,8 @@ probability =sticky-crossover-rate=.
                     (s/sh "chmod" "+x" asm-bin)
                     asm-bin))]
         (.delete (java.io.File. asm-source))
+        (when (and (not (:compile asm)) (.exists (java.io.File. asm-bin)))
+          (.delete (java.io.File. asm-bin)))
         asm)))
 #+end_src
 
@@ -643,7 +675,7 @@ counter also protected behind a ref.
                 run-test (fn [test mult]
                            (* mult
                               (try
-                               (let [out-file (.getPath (File/createTempFile "variant" ".out"))]
+                               (let [out-file (.getPath (File/createTempFile "variant-" ".out"))]
                                  (with-timeout test-timeout (s/sh test bin out-file))
                                  (count (f/read-lines out-file)))
                                (catch java.util.concurrent.TimeoutException e 0))))]
@@ -938,7 +970,7 @@ new fitness and compilation functions
     "Compile the asm and return a path to the resulting binary.  Return
     nil if the compilation (write) fails."  [asm]
     (let [asm-dir (str
-                   (.getPath (File/createTempFile "variant" "")) "/"
+                   (.getPath (File/createTempFile "variant-" "")) "/"
                    (or java-class-nest ""))]
       (s/sh "rm" "-rf" asm-dir) (s/sh "mkdir" "-p" asm-dir)
       (assoc asm
@@ -1150,17 +1182,24 @@ solution is found.
    can be written to assembly files (see [[file:code.org::assembly-manipulation][Assembly Manipulation]] and
    [[file:code.org::utility-functions][Utility Functions]]).
 
-* COMMENT Tasks [27/30]
-** TODO smaller disk footprint
-- delete binary file after evaluation
-- delete .S file after compilation
-- modify read-obj and write-obj to use compression
+* COMMENT Tasks [28/30]
+** DONE smaller disk footprint [3/3]
+- [X] delete binary file after evaluation
+- [X] delete .S file after compilation
+- [X] modify read-obj and write-obj to use compression -- this has now
+      been done with cread-obj and cwrite-obj
+
+NOTE: this has only fully been applied to the neutral space stuff.
 
 ** DONE exploration of neutral space
    :PROPERTIES:
    :CUSTOM_ID: exploration-of-neutral-space
    :END:
-1) start a set of working programs (maybe only one)
+1) start with a set of working programs (maybe only one) which could
+   be generated from a =.S= file with something like
+   #+begin_src clojure
+     (cwrite-obj "results/pop.0.clj.gz" (list (read-asm "base.s")))
+   #+end_src
 2) mutate into new programs and test for functionality until \exists 1000
    uniq working programs -- retain failed individuals
 3) write out new population to a file
@@ -1174,17 +1213,22 @@ solution is found.
   (defn ntrl? [asm script timeout]
     "Check if a mutant is still in the neutral space."
     (let [asm (compile-asm asm)  bin (:compile asm)
-          out-file (.getPath (File/createTempFile "variant" ".out"))]
-      (assoc asm
-        :fitness (if bin
-                   (try
-                    (with-timeout timeout (s/sh script bin out-file))
-                    (.delete (java.io.File.bin))
-                    (if (.exists (java.io.File. out-file))
-                      (count (f/read-lines out-file))
-                      0)
-                    (catch Exception e (do (.delete (java.io.File.bin)) 0)))
-                   0))))
+          out-file (.getPath (File/createTempFile "variant-" ".out"))
+          results (assoc asm
+                    :fitness (if bin
+                               (try
+                                (with-timeout timeout (s/sh script bin out-file))
+                                
+                                (if (.exists (java.io.File. out-file))
+                                  (count (f/read-lines out-file))
+                                  0)
+                                (catch Exception e 0))
+                               0))]
+      (dorun
+       (map #(.delete (java.io.File. %))
+            (filter #(and % (.exists (java.io.File. %)))
+                    (list bin out-file))))
+      results))
   
   (with-command-line (rest *command-line-args*)
     "explore neutral spaces:
@@ -1205,7 +1249,7 @@ solution is found.
     
     (let [pop (filter #(= (:fitness %) (to-int test-num))
                       (pmap #(if (:fitness %) % (ntrl? % script (to-int timeout)))
-                            (read-obj (first rest))))]
+                            (cread-obj (first rest))))]
       ;; write out configuration as commented clojure
       (println (str ";; compiler: " compiler))
       (println (str ";;   cflags: " cflags))
@@ -1277,10 +1321,11 @@ solution is found.
     # take a series of $2 steps in $3 walks in neutral space
     #
     for i in `seq $2`;do
-        echo "nice neutral --out-num $3 $1.`expr $i - 1`.clj > $1.$i.clj"
-        nice neutral --out-num $3 $1.`expr $i - 1`.clj > $1.$i.clj
+        echo "nice neutral --out-num $3 $1.`expr $i - 1`.clj.gz > $1.$i.clj.gz"
+        nice neutral --out-num $3 $1.`expr $i - 1`.clj.gz |gzip > $1.$i.clj.gz
+        rm /tmp/variant-*.*
         # bail if for some reason we didn't get enough
-        [[ $3 -ne `cat $1.$i.clj|grep -i ":fitness 10"| \
+        [[ $3 -ne `cat $1.$i.clj.gz |gunzip |grep -i ":fitness 10"| \
             wc|awk '{print $1}'` ]] && break
     done
   #+end_src
@@ -1650,7 +1695,7 @@ new fitness and compilation functions
 #+begin_src clojure
   (defn compile-asm
     "Compile the asm and return a path to the resulting binary."  [asm]
-    (let [asm-dir (.getPath (File/createTempFile "variant" ""))]
+    (let [asm-dir (.getPath (File/createTempFile "variant-" ""))]
       (s/sh "rm" asm-dir) (s/sh "mkdir" asm-dir)
       (try
        (write-asm (str asm-dir "/" (.getClassName base-class) ".class") asm)

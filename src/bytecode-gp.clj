@@ -105,7 +105,7 @@
   "Compile the asm and return a path to the resulting binary.  Return
   nil if the compilation (write) fails."  [asm]
   (let [asm-dir (str
-                 (.getPath (File/createTempFile "variant" "")) "/"
+                 (.getPath (File/createTempFile "variant-" "")) "/"
                  (or java-class-nest ""))]
     (s/sh "rm" "-rf" asm-dir) (s/sh "mkdir" "-p" asm-dir)
     (assoc asm

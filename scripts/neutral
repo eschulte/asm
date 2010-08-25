@@ -8,16 +8,22 @@
 (defn ntrl? [asm script timeout]
   "Check if a mutant is still in the neutral space."
   (let [asm (compile-asm asm)  bin (:compile asm)
-        out-file (.getPath (File/createTempFile "variant" ".out"))]
-    (assoc asm
-      :fitness (if bin
-                 (try
-                  (with-timeout timeout (s/sh script bin out-file))
-                  (if (.exists (java.io.File. out-file))
-                    (count (f/read-lines out-file))
-                    0)
-                  (catch Exception e 0))
-                 0))))
+        out-file (.getPath (File/createTempFile "variant-" ".out"))
+        results (assoc asm
+                  :fitness (if bin
+                             (try
+                              (with-timeout timeout (s/sh script bin out-file))
+                              
+                              (if (.exists (java.io.File. out-file))
+                                (count (f/read-lines out-file))
+                                0)
+                              (catch Exception e 0))
+                             0))]
+    (dorun
+     (map #(.delete (java.io.File. %))
+          (filter #(and % (.exists (java.io.File. %)))
+                  (list bin out-file))))
+    results))
 
 (with-command-line (rest *command-line-args*)
   "explore neutral spaces:
@@ -38,7 +44,7 @@
   
   (let [pop (filter #(= (:fitness %) (to-int test-num))
                     (pmap #(if (:fitness %) % (ntrl? % script (to-int timeout)))
-                          (read-obj (first rest))))]
+                          (cread-obj (first rest))))]
     ;; write out configuration as commented clojure
     (println (str ";; compiler: " compiler))
     (println (str ";;   cflags: " cflags))

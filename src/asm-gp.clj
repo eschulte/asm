@@ -55,6 +55,33 @@
   "Read a clojure object from a file" [f]
   (with-in-str (slurp f) (read)))
 
+(defn cwrite-obj
+  "Gzip a clojure object and write it to a file."  [f obj]
+  (with-open [#^java.io.PrintWriter w
+              (java.io.PrintWriter.
+               (java.io.BufferedWriter.
+                (java.io.OutputStreamWriter.
+                 (java.util.zip.GZIPOutputStream.
+                  (java.io.FileOutputStream.
+                   (java.io.File. f))))))]
+    (.print w (pr-str obj))))
+
+(defn cread-obj
+  "Read a g-zipped clojure object from a file" [f]
+  (with-in-str
+    (with-open [#^BufferedReader r
+                (java.io.BufferedReader.
+                 (java.io.InputStreamReader.
+                  (java.util.zip.GZIPInputStream.
+                   (java.io.FileInputStream. f))))]
+      (let [sb (StringBuilder.)]
+        (loop [c (.read r)]
+          (if (neg? c)
+            (str sb)
+            (do (.append sb (char c))
+                (recur (.read r)))))))
+    (read)))
+
 (defn shuffle
   "Shuffles coll using a Java ArrayList." [coll]
   (let [l (ArrayList. coll)] (Collections/shuffle l) (seq l)))
@@ -400,21 +427,25 @@ section."
 (defn compile-asm
   "Compile the asm, set it's :compile field to the path to the
   compiled binary if successful or to nil if unsuccessful."  [asm]
-  (let [asm-source (.getPath (File/createTempFile "variant" ".S"))
-        asm-bin (.getPath (File/createTempFile "variant" "bin"))]
+  (let [asm-source (.getPath (File/createTempFile "variant-" ".S"))
+        asm-bin (.getPath (File/createTempFile "variant-" ".bin"))]
     (write-asm asm-source asm)
-    (assoc asm
-      :compile
-      (when (= 0 (:exit
-                  (apply
-                   s/sh
-                   (concat
-                    (if (list? compiler-flags)
-                      (cons compiler compiler-flags)
-                      (apply list compiler compiler-flags))
-                    (list "-o" asm-bin asm-source :return-map true)))))
-        (s/sh "chmod" "+x" asm-bin)
-        asm-bin))))
+    (let [asm (assoc asm
+                :compile
+                (when (= 0 (:exit
+                            (apply
+                             s/sh
+                             (concat
+                              (if (list? compiler-flags)
+                                (cons compiler compiler-flags)
+                                (apply list compiler compiler-flags))
+                              (list "-o" asm-bin asm-source :return-map true)))))
+                  (s/sh "chmod" "+x" asm-bin)
+                  asm-bin))]
+      (.delete (java.io.File. asm-source))
+      (when (and (not (:compile asm)) (.exists (java.io.File. asm-bin)))
+        (.delete (java.io.File. asm-bin)))
+      asm)))
 
 (def fitness-cache (ref {}))
 
@@ -438,7 +469,7 @@ section."
               run-test (fn [test mult]
                          (* mult
                             (try
-                             (let [out-file (.getPath (File/createTempFile "variant" ".out"))]
+                             (let [out-file (.getPath (File/createTempFile "variant-" ".out"))]
                                (with-timeout test-timeout (s/sh test bin out-file))
                                (count (f/read-lines out-file)))
                              (catch java.util.concurrent.TimeoutException e 0))))]
