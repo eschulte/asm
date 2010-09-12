@@ -2900,21 +2900,3 @@ now only reading the STDOUT (not STDERR) of the test-*.sh scripts
 
 ** DONE fix packaging up of results
 the =mv= lines in the [[simple-gp-experiment]] aren't working
-* COMMENT Util
-  :PROPERTIES:
-  :ID:       79ebc3e6-c662-4faf-b594-8db6cc16bf4e
-  :END:
-
-for copying tangled scripts over to pinyon
-
-#+results: sync-dirs
-| test |
-| src  |
-| lib  |
-
-#+begin_src ruby :var dirs=sync-dirs :results silent
-  dirs.each{|d| puts %x{rsync --progress -aruv #{d}/ pinyon:research/genprog/asm/#{d}} }
-#+end_src
-
-for pushing the new website up to pinyon
-: rsync --progress -aruv --delete _asm-gp/ moons:public_html/research/asm-gp
