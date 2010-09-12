@@ -24,7 +24,9 @@ the Java Virtual Machine and has a robust infrastructure for
 multithreaded programming.
 
 This page is intended to enable reproduction of this work.  Both the
-[[file:code.org][source code]] and [[file:instructions.org][instructions for reproduction]] are provided.
+[[file:code.org][source code]] and [[file:instructions.org][instructions for reproduction]] are provided.  The git
+repository of this project is available with
+: git clone http://gitweb.adaptive.cs.unm.edu/asm.git
 
 * Code
   :PROPERTIES:
@@ -1105,7 +1107,8 @@ solution is found.
 
 ** setup
 1) The source-code and all support files are available at
-   [[file:asm-gp.tar.bz2][asm-gp.tar.bz2]].
+   [[file:asm-gp.tar.bz2][asm-gp.tar.bz2]], and through git at
+   http://gitweb.adaptive.cs.unm.edu/asm.git.
 
 2) See [[http://clojure.org/getting_started]] for information on
    configuring a working Clojure environment on your machine.
