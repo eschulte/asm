@@ -1,0 +1,45 @@
+* epr-asm
+
+Evolutionary program repair over assembly code.
+
+** Usage
+
+See documentation in epr-asm.org and online at
+http://epr.adaptive.cs.unm.edu/asm/about.html
+
+** Requirements
+
+| Org-mode | v.7.0 or greater | http://orgmode.org                             |
+| tangle   | NA               | http://orgmode.org/manual/Batch-execution.html |
+| lein     | v.1.3 or greater | http://github.com/technomancy/leiningen        |
+
+** Installation
+
+1) clone a copy of this repository
+2) install the requirements
+3) install the dependencies with lein
+   : lein deps
+4) tangle source code and utilities from neutral.org
+   : tangle neutral.org
+5) create a jar file for this project
+   : lein jar
+   and add it to your CLASSPATH
+6) (optional) export documentation from neutral.org using Org-mode's
+   export facilities http://orgmode.org/manual/Exporting.html
+
+** License
+
+Copyright (C) 2010 Eric Schulte
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.

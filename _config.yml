@@ -1,5 +1,5 @@
 auto: false
 server: false
 permalink: none
-destination: _asm-gp
+destination: _epr_asm
 exclude: gcd gcd_h gcd_java data lib

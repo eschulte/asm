@@ -1,7 +1,12 @@
-test/*
-lib/*
+lib
+classes
+scripts
+
+pom.xml
+
+*.jar
+*.html
 
 ## jekyll cruft
-*.html
 _posts/
 _asm-gp/
